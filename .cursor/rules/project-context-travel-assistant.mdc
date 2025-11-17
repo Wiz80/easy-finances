@@ -1,0 +1,45 @@
+---
+description: Authoritative project context for the WhatsApp-first Personal Finance Travel Assistant (MVP). Business logic, domain terms, agents, data stores, and core flows.
+alwaysApply: true
+---
+
+# Project Context — Personal Finance Travel Assistant (MVP)
+
+**Purpose**  
+Whatsapp-first assistant focused on **Travel Mode**: capture expenses (text/voice/image), freeze **daily FX** at `occurred_at`, support **multiple cards/accounts**, **trip/category budgets**, and **coach** insights via SQL + RAG.
+
+**Core Concepts (Authoritative)**
+- **Expense intake** → normalized record: `amount_original`, `currency_original`, `occurred_at`, `category`, `method (cash|card)`, `account_id`, optional `card_id`.
+- **FX Snapshot (immutable)** → persist per-expense conversions into `expense_fx_snapshot` (→ `home_currency`, USD y moneda local de trip).
+- **Cards & Confirmations** → defaults por usuario/trip; **nightly confirmation** para reconciliar montos/fees reales.
+- **Budgets** → scope por `trip`, con asignaciones por categoría y alertas; splits por participante en `budget.rules`.
+- **RAG** → textos parseados de recibos + políticas/FAQs en Qdrant.
+
+**Agents**
+- **Coordinator (LangGraph)**: intent routing, retries, confirmations.
+- **IE Agent**: ASR, extracción, clasificación, normalización, confidence.
+- **FX Agent**: lookup + caching + prefetch pairs; escribe `fx_rate_daily` y `expense_fx_snapshot`.
+- **Card Agent**: defaults y confirmaciones nocturnas; fee estimation básica.
+- **Coach Agent**: respuestas/reportes con vistas SQL + RAG.
+
+**Data Stores**
+- **Postgres** (relacional): `user`, `account`, `card`, `trip`, `category`, `budget`, `expense`, `expense_fx_snapshot`, `fx_rate_daily`, `receipt`, `notification_event`.
+- **Qdrant** (vector): `receipts_v1`, `policies_faqs_v1`.
+- **Object Storage**: blobs de recibos (signed URLs).  
+- **Redis**: caching/locks.
+
+**Indexing/Keys**
+- FKs estrictas; idempotencia por `source_meta.msg_id` y hash de imagen.
+- Índices: `occurred_at`, `trip_id`, `category_id`, `card_id`.
+
+**Flows Clave**
+- Voice/Text Ingestion → expense `pending_confirm` + ack.
+- Receipt → OCR/Parse → insert expense + FX snapshot + upsert en `receipts_v1`.
+- Nightly Confirmation (cards) → recaps por usuario.
+
+**Out-of-scope (MVP)**
+- Ingesta automática de estados bancarios; planeación financiera avanzada.
+
+**Terminology/Consistency**
+- Use **British/US-agnostic English** for code comments, docstrings, and logs.
+- Always refer to frozen rate object as **“FX snapshot”** (not “conversion cache”).

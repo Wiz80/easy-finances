@@ -1,0 +1,105 @@
+---
+description: Python logging over prints; structured logs for debug and production with request_id and domain fields.
+globs: ["**/*.py"]
+---
+
+# Python Logging Standards (No prints)
+
+## Mandatory
+- **Never use `print`** in application code; use `logging`.
+- Initialize a module logger:
+  ```python
+  import logging
+
+  logger = logging.getLogger(__name__)
+Configure once at app entrypoint with JSON/structured formatting and levels from env:
+
+LOG_LEVEL (default INFO), ENV (dev|prod), SERVICE (api|worker|scheduler).
+
+Required Fields
+Every log record should include:
+
+request_id (or job id), user_id (if available), trip_id (if available),
+
+intent, agent, and timing (ms).
+
+Examples
+python
+Copy code
+logger.info(
+    "expense_ingested",
+    extra={"user_id": uid, "trip_id": tid, "intent": "expense", "elapsed_ms": 42},
+)
+Do / Don’t
+✅ logger.exception("ocr_failed", extra={...}) on caught errors.
+
+❌ print("debug").
+
+yaml
+Copy code
+
+---
+
+### `.cursor/rules/code-language-and-style.mdc`
+
+```md
+---
+description: Code comments and docstrings must be in English; Python 3.13 target; minimal style expectations for maintainability.
+globs: ["**/*.py"]
+---
+
+# Code Language & Minimal Style
+
+## Language
+- **All comments, docstrings, commit messages, and logs are in English.**
+
+## Python Version
+- Target **Python 3.13**. Prefer standard libs first; avoid deprecated APIs.
+
+## Conventions
+- Use **type hints** everywhere; enable `from __future__ import annotations` when helpful.
+- Small, pure functions; explicit returns; no hidden side effects.
+- Keep public functions with docstrings:
+  ```python
+  def compute_fx_snapshot(...):
+      """
+      Compute immutable FX snapshot at occurred_at.
+      Raises on missing rate; does not mutate expense.
+      """
+Dependencies
+Add runtime deps to requirements.txt and lock via pip-tools or UV when introduced.
+
+Keep optional heavy libs behind feature flags (e.g., OCR backends).
+
+yaml
+Copy code
+
+---
+
+### `.cursor/rules/testing-manual-drivers.mdc`
+
+```md
+---
+description: MVP testing via simple Python drivers (no pytest initially). Deterministic, idempotent, and log-verified.
+globs: ["tests-manual/**/*.py"]
+---
+
+# Manual Test Drivers (MVP)
+
+## Scope
+- Use simple `*.py` scripts in `tests-manual/` to drive:
+  1) text/voice expense ingestion,
+  2) receipt OCR + FX snapshot,
+  3) nightly card confirmation.
+
+## Expectations
+- Deterministic inputs; stable seeds.
+- Idempotent runs: re-running the same driver **must not** create duplicates (expect 409 or no-op).
+- Drivers **print only final summaries**; validation relies on application **logs** and DB queries.
+
+## Example Structure
+tests-manual/
+├── 01_ingest_text.py
+├── 02_ingest_voice.py
+├── 03_ingest_receipt.py
+└── 10_nightly_confirmation.py

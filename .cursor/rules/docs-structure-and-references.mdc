@@ -1,0 +1,29 @@
+---
+description: Documentation folder structure, sources of truth, and how to reference internal docs from rules and prompts.
+globs: ["docs/**/*.md", "README.md"]
+---
+
+# Documentation Structure & Referencing
+
+## Structure
+- Place all project docs under `docs/`:
+docs/
+├── context.md/ # executive-summary, business-logic, flows
+├── api/ # OpenAPI, endpoint contracts, examples
+├── data/ # schemas (sql), ERDs, migrations notes
+├── agents/ # LangGraph design, tools, prompts
+├── ops/ # deploy, compose, env samples, cost
+└── qa/ # manual test drivers, checklists
+
+
+## Sources of Truth
+- **Business rules**: `docs/context/business-logic.md` (mirrors *Project Context* rule).
+- **Schemas**: `docs/data/schemas.sql` + `docs/data/er-diagram.md`.
+- **API**: `docs/api/openapi.yaml` + `docs/api/examples/*.md`.
+
+## Referencing from Cursor
+- When you need context, reference with `@` in prompts/rules (e.g., `@docs/api/openapi.yaml`).  
+- Keep docs concise and **updated in English**; user-facing copy in apps can be localized.
+
+## Acceptance
+- Any change to the data model or FX policy **must** update the docs before merge.

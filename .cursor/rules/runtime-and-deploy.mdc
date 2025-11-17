@@ -1,0 +1,14 @@
+---
+description: Runtime baseline (Docker Compose, single VM), services, and environment conventions for the MVP.
+globs: ["docker-compose*.yml", "Dockerfile*", ".env*", "scripts/**/*.sh"]
+---
+
+# Runtime & Deploy (Phase 1)
+
+- **Single VM (Docker Compose)** services: FastAPI + LangGraph, Postgres, Redis, Qdrant, n8n, Celery worker.
+- Pin images and versions; healthchecks for DB/vector store.
+- Secrets only via env vars; provide `.env.example` with placeholders (no secrets).
+- Expose signed URLs for receipt blobs; restrict public buckets.
+
+## Observability
+- Emit metrics: ingest latency, OCR latency, FX RTT, `% pending_confirm > 24h`, classifier confidence distribution.

@@ -1,0 +1,15 @@
+---
+description: Enforce immutable FX snapshot per expense date and idempotent ingestion semantics.
+globs: ["**/*.py", "docs/data/**/*.md"]
+---
+
+# FX Snapshot & Idempotent Ingestion
+
+## FX Snapshot
+- At insertion time, compute FX using **daily rate at `occurred_at`**.
+- Persist immutable conversions in `expense_fx_snapshot` (→ home, USD, local).
+- **Never recompute retroactively**; if a correction is required, create an adjusting entry.
+
+## Idempotency
+- Use `source_meta.msg_id` and/or image hash to reject duplicates (409) or no-op safely.
+- DB constraints: unique on (`user_id`, `source_meta.msg_id`) where applicable.

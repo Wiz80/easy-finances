@@ -1,0 +1,11 @@
+---
+description: Minimal security/privacy practices for MVP (PII in logs, signed URLs, multi-tenant readiness).
+alwaysApply: true
+---
+
+# Security & Privacy (MVP)
+
+- **No PII in logs**; redact or hash IDs when not required.
+- Receipt images stored with **signed URLs** and short TTLs.
+- Prepare for multi-tenant access patterns (row-level filters or per-tenant schemas).
+- Rotate credentials; restrict DB users by role; principle of least privilege for services.

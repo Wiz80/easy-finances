@@ -1,0 +1,14 @@
+---
+description: Policy to ask for clarification on ambiguous tasks and to confirm critical assumptions (cards, currencies, dates).
+alwaysApply: true
+---
+
+# Clarification & Confirmations Policy
+
+- If any instruction is **ambiguous or incomplete**, **ask for clarification** before implementing.
+- **Card selection**:
+  - If a card is implied but unspecified, prompt user. If no response within the grace window, use **default card** and record rationale.
+- **Currencies & Dates**:
+  - Confirm `currency_original` when ambiguous; ensure `occurred_at` timezone aligns with **trip-scoped TZ**.
+- **Destructive Actions**:
+  - For data corrections that could alter money totals, require explicit confirmation and log the decision.
