@@ -38,3 +38,8 @@ Thumbs.db
 
 
 *.mp3
+*.ogg
+
+repos
+
+docs/

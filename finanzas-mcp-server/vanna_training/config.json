@@ -1,0 +1,112 @@
+{
+  "version": "1.0.0",
+  "schema_version": "2024-12-01",
+  "language": "es",
+  "tables": [
+    {
+      "name": "expense",
+      "enabled": true,
+      "description": "Gastos del usuario capturados por texto, voz o imagen de recibo",
+      "business_context": "Tabla principal que almacena todos los gastos. Cada gasto tiene un monto original y moneda, está asociado a un usuario, cuenta y categoría. El campo occurred_at indica cuando ocurrió el gasto (no cuando se registró).",
+      "key_columns": [
+        {"name": "id", "description": "UUID único del gasto"},
+        {"name": "user_id", "description": "FK al usuario dueño del gasto"},
+        {"name": "amount_original", "description": "Monto original en la moneda de origen"},
+        {"name": "currency_original", "description": "Código ISO 4217 de la moneda (USD, PEN, EUR)"},
+        {"name": "category_id", "description": "FK a la categoría del gasto"},
+        {"name": "occurred_at", "description": "Fecha/hora cuando ocurrió el gasto"},
+        {"name": "description", "description": "Descripción del gasto"},
+        {"name": "status", "description": "Estado: pending_confirm | confirmed | flagged"}
+      ],
+      "example_questions": [
+        "¿Cuánto gasté este mes?",
+        "¿Cuáles son mis gastos en comida?",
+        "Muéstrame los gastos de la última semana",
+        "¿Cuál fue mi gasto más alto?",
+        "¿Cuánto gasté por categoría este mes?",
+        "Dame un resumen de gastos del mes pasado"
+      ]
+    },
+    {
+      "name": "category",
+      "enabled": true,
+      "description": "Categorías predefinidas para clasificar gastos",
+      "business_context": "Categorías como FOOD, TRANSPORT, LODGING usadas para clasificar gastos. El slug es el identificador programático.",
+      "key_columns": [
+        {"name": "id", "description": "UUID de la categoría"},
+        {"name": "name", "description": "Nombre legible de la categoría"},
+        {"name": "slug", "description": "Identificador URL-safe (in_house_food, transport)"}
+      ],
+      "example_questions": [
+        "¿Cuáles son las categorías disponibles?",
+        "¿Cuánto gasté por categoría?"
+      ]
+    },
+    {
+      "name": "trip",
+      "enabled": true,
+      "description": "Viajes para agrupar gastos por destino",
+      "business_context": "Permite agrupar gastos por viaje. Útil para presupuestos de viaje y reportes por destino.",
+      "key_columns": [
+        {"name": "id", "description": "UUID del viaje"},
+        {"name": "user_id", "description": "FK al usuario"},
+        {"name": "name", "description": "Nombre del viaje"},
+        {"name": "start_date", "description": "Fecha de inicio"},
+        {"name": "end_date", "description": "Fecha de fin"},
+        {"name": "budget_amount", "description": "Presupuesto planeado"}
+      ],
+      "example_questions": [
+        "¿Cuánto gasté en mi viaje a Lima?",
+        "¿Cómo va mi presupuesto del viaje actual?",
+        "Muéstrame mis viajes"
+      ]
+    },
+    {
+      "name": "receipt",
+      "enabled": true,
+      "description": "Recibos escaneados con datos extraídos por OCR",
+      "business_context": "Almacena imágenes de recibos y datos extraídos por OCR. Cada recibo puede estar vinculado a un gasto.",
+      "key_columns": [
+        {"name": "id", "description": "UUID del recibo"},
+        {"name": "user_id", "description": "FK al usuario"},
+        {"name": "expense_id", "description": "FK al gasto asociado"},
+        {"name": "parsed_data", "description": "JSONB con datos extraídos del recibo"},
+        {"name": "ocr_confidence", "description": "Nivel de confianza del OCR"}
+      ],
+      "example_questions": [
+        "¿Cuántos recibos tengo guardados?",
+        "Muéstrame los recibos del último mes"
+      ]
+    },
+    {
+      "name": "account",
+      "enabled": true,
+      "description": "Cuentas bancarias del usuario",
+      "business_context": "Cuentas desde donde se realizan los gastos. Pueden tener múltiples tarjetas asociadas.",
+      "key_columns": [
+        {"name": "id", "description": "UUID de la cuenta"},
+        {"name": "user_id", "description": "FK al usuario"},
+        {"name": "name", "description": "Nombre de la cuenta"},
+        {"name": "bank_name", "description": "Nombre del banco"},
+        {"name": "currency", "description": "Moneda principal de la cuenta"}
+      ],
+      "example_questions": [
+        "¿Cuáles son mis cuentas?",
+        "¿Cuánto gasté desde cada cuenta?"
+      ]
+    }
+  ],
+  "global_rules": [
+    "SIEMPRE filtrar por user_id = :user_id",
+    "Usar occurred_at para filtros de fecha, NO created_at",
+    "Los montos están en amount_original con currency_original",
+    "Status 'confirmed' significa gastos verificados"
+  ],
+  "security": {
+    "allowed_operations": ["SELECT"],
+    "forbidden_patterns": ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE", "ALTER", "CREATE"],
+    "max_result_rows": 1000,
+    "query_timeout_seconds": 30
+  }
+}
+

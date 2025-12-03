@@ -1,0 +1,49 @@
+---
+description: All LLM prompts must be centralized in app/prompts/ for maintainability, versioning, and consistency.
+globs: ["app/**/*.py"]
+---
+
+# Centralized Prompts Policy
+
+## Location
+- **All LLM prompts must live in `app/prompts/`**.
+- Never hardcode prompts inline in agent code, tools, or other modules.
+
+## Structure
+```
+app/prompts/
+├── __init__.py          # Re-exports all prompts
+├── expense_extraction.py # IE Agent extraction prompts
+├── sql_generation.py     # Coach Agent (Vanna) SQL prompts
+└── <new_domain>.py       # Future prompt modules
+```
+
+## Conventions
+1. **Naming**: Use `SCREAMING_SNAKE_CASE` for prompt constants (e.g., `SQL_GENERATION_SYSTEM`).
+2. **Suffix pattern**: `_SYSTEM` for system prompts, `_USER` for user templates, `_PROMPT` for complete ChatPromptTemplate objects.
+3. **Docstrings**: Each module must have a docstring explaining the prompt's purpose and which agent/tool uses it.
+4. **Exports**: Add new prompts to `app/prompts/__init__.py` with `__all__`.
+
+## Importing
+```python
+# Preferred: import from module directly
+from app.prompts.sql_generation import SQL_GENERATION_SYSTEM
+
+# Also valid: import from package
+from app.prompts import SQL_GENERATION_SYSTEM
+```
+
+## Do / Don't
+✅ Define prompts as module-level constants in `app/prompts/`.
+✅ Use variables/placeholders for dynamic content (e.g., `{schema}`, `{question}`).
+✅ Keep prompts in English for LLM consistency; user-facing responses can be localized elsewhere.
+
+❌ Inline multi-line prompt strings in agent/tool code.
+❌ Duplicate prompts across modules.
+❌ Mix prompt definitions with business logic.
+
+## Rationale
+- **Single source of truth** for prompt wording and structure.
+- **Easy auditing** of all LLM instructions.
+- **Version control** visibility when prompts change.
+- **Reusability** across agents and tools.

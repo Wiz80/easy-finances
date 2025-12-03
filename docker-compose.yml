@@ -46,6 +46,49 @@ services:
     networks:
       - finanzas_network
 
+  # MinIO Object Storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: finanzas_minio
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - finanzas_network
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: finanzas_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 $${MINIO_ACCESS_KEY:-minioadmin} $${MINIO_SECRET_KEY:-minioadmin};
+      mc mb --ignore-existing myminio/$${MINIO_BUCKET_NAME:-finanzas-receipts};
+      mc anonymous set download myminio/$${MINIO_BUCKET_NAME:-finanzas-receipts};
+      exit 0;
+      "
+    environment:
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-finanzas-receipts}
+    networks:
+      - finanzas_network
+
   # n8n Workflow Automation
   n8n:
     image: n8nio/n8n:latest
@@ -119,6 +162,8 @@ volumes:
   qdrant_storage:
     driver: local
   qdrant_snapshots:
+    driver: local
+  minio_data:
     driver: local
   n8n_data:
     driver: local

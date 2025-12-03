@@ -185,6 +185,26 @@ class ExtractedReceipt(BaseModel):
     receipt_number: str | None = Field(
         None, description="Receipt or transaction number", max_length=100
     )
+    # Transaction specific fields
+    recipient: str | None = Field(
+        None, description="Beneficiary name or account", max_length=255
+    )
+    sender: str | None = Field(
+        None, description="Sender name or account", max_length=255
+    )
+    transaction_type: str | None = Field(
+        None, description="Type of transaction (Transfer, Payment, etc)", max_length=50
+    )
+    bank_name: str | None = Field(
+        None, description="Bank or wallet name (e.g. Bancolombia, Nequi)", max_length=100
+    )
+    account_number: str | None = Field(
+        None, description="Target account number or identifier", max_length=100
+    )
+    reference_code: str | None = Field(
+        None, description="Transaction reference code", max_length=100
+    )
+    
     category_candidate: str = Field(
         default="misc",
         description="Suggested category based on merchant/items",

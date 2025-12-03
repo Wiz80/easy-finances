@@ -16,18 +16,18 @@ An intelligent personal finance assistant that helps travelers track expenses in
 
 ## ✨ Features
 
-### ✅ Implemented (Phase 1A & 1B - Partial)
-- **Multi-modal Input Support**: Text, voice, and receipt images
-- **Database Schema**: Complete PostgreSQL schema with Alembic migrations
-- **8 MVP Categories**: Delivery, In-House Food, Out-House Food, Lodging, Transport, Tourism, Healthcare, Misc
+### ✅ Implemented (Phase 1A & 1B - Complete!)
+- **Multi-modal Input Support**: Text, voice, and receipt images ✅
+- **Database Schema**: Complete PostgreSQL schema with Alembic migrations ✅
+- **8 MVP Categories**: Delivery, In-House Food, Out-House Food, Lodging, Transport, Tourism, Healthcare, Misc ✅
 - **Text Expense Extractor**: LangChain + OpenAI GPT-4o with structured output ✅
 - **Audio Transcriber**: OpenAI Whisper API + Text Extractor pipeline ✅
-- **Multi-Provider LLM Support**: OpenAI (default), Anthropic Claude, Google Gemini
-- **Structured Logging**: `structlog` with JSON output
-- **Configuration Management**: Pydantic Settings with `.env` support
+- **Receipt Parser**: LlamaExtract API with structured schema extraction ✅
+- **Multi-Provider LLM Support**: OpenAI (default), Anthropic Claude, Google Gemini ✅
+- **Structured Logging**: `structlog` with JSON output ✅
+- **Configuration Management**: Pydantic Settings with `.env` support ✅
 
-### 🚧 In Progress (Phase 1B)
-- Receipt Parser (LlamaParse integration)
+### 🚧 In Progress (Phase 1C)
 - Storage Layer (Expense & Receipt Writers)
 
 ### 📋 Planned (Phase 1C-E)
@@ -48,7 +48,7 @@ An intelligent personal finance assistant that helps travelers track expenses in
 │  │  (Intent)   │      │                          │    │
 │  └─────────────┘      │  • Text Extractor ✅     │    │
 │                       │  • Audio Transcriber ✅  │    │
-│                       │  • Receipt Parser 🚧     │    │
+│                       │  • Receipt Parser ✅     │    │
 │                       └──────────────────────────┘    │
 │                                                          │
 │                       ┌──────────────────────────┐    │
@@ -281,6 +281,20 @@ print(f"Category: {expense.category_candidate}")  # transport
 print(f"Transcription: {expense.notes}")  # Original audio text
 ```
 
+### Receipt Data Extraction
+
+```python
+from app.tools.extraction.receipt_parser import extract_receipt_from_file
+
+# Extract structured data from receipt (LlamaExtract API with schema)
+receipt = extract_receipt_from_file("receipt.jpg")
+
+print(f"Merchant: {receipt.merchant}")  # SuperMercado El Ahorro
+print(f"Total: {receipt.total_amount} {receipt.currency}")  # 67.30 PEN
+print(f"Items: {len(receipt.line_items)}")  # 15
+print(f"Category: {receipt.category_candidate}")  # in_house_food
+```
+
 ### Database Queries
 
 ```python
@@ -312,6 +326,12 @@ python tests-manual/generate_test_audio.py
 
 # Test with your own audio file
 python tests-manual/test_audio_extractor.py path/to/your/audio.ogg
+
+# Test receipt parser
+python tests-manual/test_receipt_parser.py
+
+# Test with your own receipt
+python tests-manual/test_receipt_parser.py path/to/receipt.jpg
 
 # Output shows:
 # - Extracted data for each test case

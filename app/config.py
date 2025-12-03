@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     whisper_model: str = Field(default="whisper-1")
 
     # =========================================================================
-    # Object Storage (MinIO) Configuration
+    # Object Storage (MinIO)
     # =========================================================================
     minio_host: str = Field(default="localhost")
     minio_port: int = Field(default=9000)
@@ -102,11 +102,41 @@ class Settings(BaseSettings):
     qdrant_host: str = Field(default="localhost")
     qdrant_http_port: int = Field(default=6333)
     qdrant_grpc_port: int = Field(default=6334)
+    qdrant_api_key: str | None = Field(default=None)
 
     @property
     def qdrant_url(self) -> str:
         """Construct Qdrant HTTP URL."""
         return f"http://{self.qdrant_host}:{self.qdrant_http_port}"
+
+    # =========================================================================
+    # Vanna AI Configuration
+    # =========================================================================
+    # Collection names
+    vanna_ddl_collection: str = Field(default="vanna_ddl")
+    vanna_doc_collection: str = Field(default="vanna_documentation")
+    vanna_sql_collection: str = Field(default="vanna_sql")
+
+    # Read-only database user for Vanna queries
+    vanna_db_user: str = Field(default="vanna_reader")
+    vanna_db_password: str = Field(default="vanna_readonly_password")
+
+    # Query execution limits
+    vanna_query_timeout_seconds: int = Field(default=30)
+    vanna_max_result_rows: int = Field(default=1000)
+
+    # Training configuration
+    vanna_training_llm_provider: Literal["openai", "anthropic"] = Field(default="openai")
+    vanna_embedding_model: str = Field(default="text-embedding-3-small")
+    vanna_vector_dimension: int = Field(default=1536)
+
+    @property
+    def vanna_database_url(self) -> str:
+        """Construct read-only PostgreSQL connection URL for Vanna."""
+        return (
+            f"postgresql://{self.vanna_db_user}:{self.vanna_db_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
 
     # =========================================================================
     # Application Settings
