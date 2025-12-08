@@ -48,4 +48,14 @@ qdrant_snapshots/
 n8n_data/
 n8n_workflows/
 
+*.jpg
+*.png
+*.pdf
+*.docx
+*.doc
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
 

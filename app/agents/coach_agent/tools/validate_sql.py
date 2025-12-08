@@ -79,3 +79,4 @@ def validate_sql(sql: str) -> dict[str, Any]:
             "sql_type": "UNKNOWN",
         }
 
+

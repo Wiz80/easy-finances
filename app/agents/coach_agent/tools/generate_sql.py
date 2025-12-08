@@ -116,3 +116,4 @@ def generate_sql(question: str, user_id: str) -> dict[str, Any]:
             "error": str(e),
         }
 
+

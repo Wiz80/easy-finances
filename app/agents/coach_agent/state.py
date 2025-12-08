@@ -38,3 +38,4 @@ class CoachAgentState(TypedDict, total=False):
     status: str  # pending, generating_sql, executing, analyzing, completed, error
     errors: list[str]
 
+
