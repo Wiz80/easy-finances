@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.budget import BudgetAllocation
     from app.models.expense import Expense
 
 
@@ -56,6 +57,9 @@ class Category(Base):
     
     # Relationships
     expenses: Mapped[list["Expense"]] = relationship("Expense", back_populates="category")
+    budget_allocations: Mapped[list["BudgetAllocation"]] = relationship(
+        "BudgetAllocation", back_populates="category"
+    )
 
     def __repr__(self) -> str:
         return f"<Category(id={self.id}, name={self.name}, slug={self.slug})>"

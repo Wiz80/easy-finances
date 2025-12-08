@@ -1,0 +1,181 @@
+{
+  "version": "1.0.0",
+  "schema_version": "2024-12-03",
+  "language": "es",
+  "tables": [
+    {
+      "name": "expense",
+      "enabled": true,
+      "description": "Gastos del usuario capturados por texto, voz o imagen de recibo",
+      "business_context": "Tabla principal que almacena todos los gastos. Cada gasto tiene un monto original y moneda, está asociado a un usuario, cuenta y categoría. El campo occurred_at indica cuando ocurrió el gasto (no cuando se registró).",
+      "key_columns": [
+        {"name": "id", "description": "UUID único del gasto"},
+        {"name": "user_id", "description": "FK al usuario dueño del gasto - SIEMPRE filtrar por este campo"},
+        {"name": "amount_original", "description": "Monto original en la moneda de origen"},
+        {"name": "currency_original", "description": "Código ISO 4217 de la moneda (USD, PEN, EUR, MXN)"},
+        {"name": "category_id", "description": "FK a la categoría del gasto"},
+        {"name": "occurred_at", "description": "Fecha/hora cuando ocurrió el gasto - usar para filtros de fecha"},
+        {"name": "description", "description": "Descripción del gasto"},
+        {"name": "merchant", "description": "Nombre del comercio o vendedor"},
+        {"name": "status", "description": "Estado: pending_confirm | confirmed | flagged"},
+        {"name": "trip_id", "description": "FK al viaje asociado (puede ser NULL)"}
+      ],
+      "sql_examples": [
+        {
+          "question": "¿Cuánto gasté este mes?",
+          "sql": "SELECT SUM(amount_original) as total, currency_original FROM expense WHERE user_id = :user_id AND occurred_at >= DATE_TRUNC('month', CURRENT_DATE) GROUP BY currency_original"
+        },
+        {
+          "question": "¿Cuáles son mis gastos en comida?",
+          "sql": "SELECT e.*, c.name as categoria FROM expense e JOIN category c ON e.category_id = c.id WHERE e.user_id = :user_id AND c.slug IN ('in_house_food', 'out_house_food', 'delivery') ORDER BY e.occurred_at DESC"
+        },
+        {
+          "question": "¿Cuál fue mi gasto más alto?",
+          "sql": "SELECT * FROM expense WHERE user_id = :user_id ORDER BY amount_original DESC LIMIT 1"
+        },
+        {
+          "question": "¿Cuánto gasté por categoría este mes?",
+          "sql": "SELECT c.name as categoria, SUM(e.amount_original) as total, e.currency_original FROM expense e JOIN category c ON e.category_id = c.id WHERE e.user_id = :user_id AND e.occurred_at >= DATE_TRUNC('month', CURRENT_DATE) GROUP BY c.name, e.currency_original ORDER BY total DESC"
+        },
+        {
+          "question": "Muéstrame los gastos de la última semana",
+          "sql": "SELECT e.*, c.name as categoria FROM expense e JOIN category c ON e.category_id = c.id WHERE e.user_id = :user_id AND e.occurred_at >= CURRENT_DATE - INTERVAL '7 days' ORDER BY e.occurred_at DESC"
+        },
+        {
+          "question": "Dame un resumen de gastos del mes pasado",
+          "sql": "SELECT c.name as categoria, COUNT(*) as cantidad, SUM(e.amount_original) as total, e.currency_original FROM expense e JOIN category c ON e.category_id = c.id WHERE e.user_id = :user_id AND e.occurred_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND e.occurred_at < DATE_TRUNC('month', CURRENT_DATE) GROUP BY c.name, e.currency_original ORDER BY total DESC"
+        }
+      ]
+    },
+    {
+      "name": "category",
+      "enabled": true,
+      "description": "Categorías predefinidas para clasificar gastos",
+      "business_context": "Categorías como FOOD, TRANSPORT, LODGING usadas para clasificar gastos. El slug es el identificador programático. Las categorías de comida incluyen: in_house_food (comida en casa), out_house_food (restaurantes), delivery (comida a domicilio).",
+      "key_columns": [
+        {"name": "id", "description": "UUID de la categoría"},
+        {"name": "name", "description": "Nombre legible de la categoría"},
+        {"name": "slug", "description": "Identificador URL-safe (in_house_food, out_house_food, delivery, transport, lodging, activities, shopping, other)"}
+      ],
+      "sql_examples": [
+        {
+          "question": "¿Cuáles son las categorías disponibles?",
+          "sql": "SELECT id, name, slug FROM category ORDER BY name"
+        }
+      ]
+    },
+    {
+      "name": "trip",
+      "enabled": true,
+      "description": "Viajes para agrupar gastos por destino",
+      "business_context": "Permite agrupar gastos por viaje. Útil para presupuestos de viaje y reportes por destino. Cada viaje tiene fechas de inicio y fin, y opcionalmente un presupuesto asignado.",
+      "key_columns": [
+        {"name": "id", "description": "UUID del viaje"},
+        {"name": "user_id", "description": "FK al usuario - SIEMPRE filtrar por este campo"},
+        {"name": "name", "description": "Nombre del viaje (ej: 'Viaje a Lima')"},
+        {"name": "start_date", "description": "Fecha de inicio del viaje"},
+        {"name": "end_date", "description": "Fecha de fin del viaje"},
+        {"name": "budget_amount", "description": "Presupuesto planeado para el viaje"},
+        {"name": "budget_currency", "description": "Moneda del presupuesto"}
+      ],
+      "sql_examples": [
+        {
+          "question": "Muéstrame mis viajes",
+          "sql": "SELECT * FROM trip WHERE user_id = :user_id ORDER BY start_date DESC"
+        },
+        {
+          "question": "¿Cuánto gasté en mi viaje a Lima?",
+          "sql": "SELECT t.name as viaje, SUM(e.amount_original) as total, e.currency_original FROM expense e JOIN trip t ON e.trip_id = t.id WHERE e.user_id = :user_id AND LOWER(t.name) LIKE '%lima%' GROUP BY t.name, e.currency_original"
+        },
+        {
+          "question": "¿Cómo va mi presupuesto del viaje actual?",
+          "sql": "SELECT t.name, t.budget_amount, t.budget_currency, COALESCE(SUM(e.amount_original), 0) as gastado, t.budget_amount - COALESCE(SUM(e.amount_original), 0) as restante FROM trip t LEFT JOIN expense e ON t.id = e.trip_id AND e.user_id = :user_id WHERE t.user_id = :user_id AND CURRENT_DATE BETWEEN t.start_date AND t.end_date GROUP BY t.id, t.name, t.budget_amount, t.budget_currency"
+        }
+      ]
+    },
+    {
+      "name": "receipt",
+      "enabled": true,
+      "description": "Recibos escaneados con datos extraídos por OCR",
+      "business_context": "Almacena imágenes de recibos subidas por usuarios con datos extraídos por OCR. Cada recibo puede estar vinculado a un gasto. El campo parsed_data contiene información estructurada del recibo.",
+      "key_columns": [
+        {"name": "id", "description": "UUID del recibo"},
+        {"name": "user_id", "description": "FK al usuario - SIEMPRE filtrar por este campo"},
+        {"name": "expense_id", "description": "FK al gasto asociado (puede ser NULL si aún no se vinculó)"},
+        {"name": "parsed_data", "description": "JSONB con datos extraídos: merchant, total, items, date"},
+        {"name": "ocr_confidence", "description": "Nivel de confianza del OCR (0.0 a 1.0)"},
+        {"name": "image_url", "description": "URL de la imagen del recibo"}
+      ],
+      "sql_examples": [
+        {
+          "question": "¿Cuántos recibos tengo guardados?",
+          "sql": "SELECT COUNT(*) as total_recibos FROM receipt WHERE user_id = :user_id"
+        },
+        {
+          "question": "Muéstrame los recibos del último mes",
+          "sql": "SELECT r.*, e.amount_original, e.currency_original FROM receipt r LEFT JOIN expense e ON r.expense_id = e.id WHERE r.user_id = :user_id AND r.created_at >= CURRENT_DATE - INTERVAL '30 days' ORDER BY r.created_at DESC"
+        }
+      ]
+    },
+    {
+      "name": "account",
+      "enabled": true,
+      "description": "Cuentas bancarias o de efectivo del usuario",
+      "business_context": "Cuentas desde donde se realizan los gastos. Pueden ser cuentas bancarias o de efectivo. Cada cuenta tiene una moneda principal.",
+      "key_columns": [
+        {"name": "id", "description": "UUID de la cuenta"},
+        {"name": "user_id", "description": "FK al usuario - SIEMPRE filtrar por este campo"},
+        {"name": "name", "description": "Nombre de la cuenta (ej: 'Cuenta principal')"},
+        {"name": "bank_name", "description": "Nombre del banco (NULL para efectivo)"},
+        {"name": "currency", "description": "Moneda principal de la cuenta"},
+        {"name": "account_type", "description": "Tipo: checking, savings, cash"}
+      ],
+      "sql_examples": [
+        {
+          "question": "¿Cuáles son mis cuentas?",
+          "sql": "SELECT id, name, bank_name, currency, account_type FROM account WHERE user_id = :user_id ORDER BY name"
+        },
+        {
+          "question": "¿Cuánto gasté desde cada cuenta?",
+          "sql": "SELECT a.name as cuenta, a.bank_name, SUM(e.amount_original) as total, e.currency_original FROM expense e JOIN account a ON e.account_id = a.id WHERE e.user_id = :user_id GROUP BY a.id, a.name, a.bank_name, e.currency_original ORDER BY total DESC"
+        }
+      ]
+    },
+    {
+      "name": "card",
+      "enabled": true,
+      "description": "Tarjetas de crédito o débito asociadas a cuentas",
+      "business_context": "Tarjetas vinculadas a cuentas bancarias. Útil para rastrear gastos por tarjeta y reconciliar estados de cuenta.",
+      "key_columns": [
+        {"name": "id", "description": "UUID de la tarjeta"},
+        {"name": "account_id", "description": "FK a la cuenta a la que pertenece"},
+        {"name": "name", "description": "Nombre o alias de la tarjeta"},
+        {"name": "last_four", "description": "Últimos 4 dígitos de la tarjeta"},
+        {"name": "card_type", "description": "Tipo: credit, debit"}
+      ],
+      "sql_examples": [
+        {
+          "question": "¿Cuáles son mis tarjetas?",
+          "sql": "SELECT c.id, c.name, c.last_four, c.card_type, a.name as cuenta FROM card c JOIN account a ON c.account_id = a.id WHERE a.user_id = :user_id ORDER BY c.name"
+        }
+      ]
+    }
+  ],
+  "global_rules": [
+    "SIEMPRE filtrar por user_id = :user_id para aislar datos del usuario",
+    "Usar occurred_at para filtros de fecha, NO created_at",
+    "Los montos están en amount_original con currency_original",
+    "Status 'confirmed' significa gastos verificados por el usuario",
+    "Para categorías de comida usar slugs: in_house_food, out_house_food, delivery",
+    "Usar DATE_TRUNC('month', CURRENT_DATE) para 'este mes'",
+    "Usar CURRENT_DATE - INTERVAL '7 days' para 'última semana'",
+    "Usar CURRENT_DATE - INTERVAL '30 days' para 'último mes'"
+  ],
+  "security": {
+    "allowed_operations": ["SELECT"],
+    "forbidden_patterns": ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE", "ALTER", "CREATE"],
+    "max_result_rows": 1000,
+    "query_timeout_seconds": 30
+  }
+}
+

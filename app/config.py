@@ -153,6 +153,30 @@ class Settings(BaseSettings):
     n8n_host: str = Field(default="localhost")
     n8n_port: int = Field(default=5678)
 
+    # =========================================================================
+    # Twilio WhatsApp Configuration
+    # =========================================================================
+    twilio_account_sid: str = Field(default="")
+    twilio_auth_token: str = Field(default="")
+    twilio_whatsapp_from: str = Field(
+        default="whatsapp:+14155238886"
+    )  # Sandbox number
+    
+    # Webhook Configuration
+    webhook_base_url: str = Field(default="")  # e.g., https://abc123.ngrok.io
+    twilio_webhook_path: str = Field(default="/api/v1/webhook/twilio")
+    
+    @property
+    def twilio_webhook_url(self) -> str:
+        """Full Twilio webhook URL."""
+        return f"{self.webhook_base_url}{self.twilio_webhook_path}"
+
+    # =========================================================================
+    # Conversation Settings
+    # =========================================================================
+    conversation_timeout_minutes: int = Field(default=30)
+    max_conversation_messages: int = Field(default=100)
+
 
 # Global settings instance
 settings = Settings()

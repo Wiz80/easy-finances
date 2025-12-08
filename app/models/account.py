@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.budget import BudgetFundingSource
     from app.models.card import Card
     from app.models.expense import Expense
     from app.models.user import User
@@ -59,6 +60,9 @@ class Account(Base):
     )
     expenses: Mapped[list["Expense"]] = relationship(
         "Expense", back_populates="account", cascade="all, delete-orphan"
+    )
+    budget_funding_sources: Mapped[list["BudgetFundingSource"]] = relationship(
+        "BudgetFundingSource", back_populates="account"
     )
 
     def __repr__(self) -> str:

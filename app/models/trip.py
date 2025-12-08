@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.budget import Budget
     from app.models.expense import Expense
     from app.models.user import User
 
@@ -59,9 +60,16 @@ class Trip(Base):
     )
     
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="trips")
+    user: Mapped["User"] = relationship(
+        "User", 
+        back_populates="trips",
+        foreign_keys=[user_id]  # Explicitly specify which FK to use
+    )
     expenses: Mapped[list["Expense"]] = relationship(
         "Expense", back_populates="trip", cascade="all, delete-orphan"
+    )
+    budgets: Mapped[list["Budget"]] = relationship(
+        "Budget", back_populates="trip"
     )
 
     def __repr__(self) -> str:

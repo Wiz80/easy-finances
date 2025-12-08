@@ -8,8 +8,6 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-finanzas_user}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-finanzas_password}
       - POSTGRES_DB=${POSTGRES_DB:-finanzas_db}
-      - POSTGRES_NON_ROOT_USER=${POSTGRES_NON_ROOT_USER:-n8n}
-      - POSTGRES_NON_ROOT_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD:-n8n_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
@@ -89,66 +87,20 @@ services:
     networks:
       - finanzas_network
 
-  # n8n Workflow Automation
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: finanzas_n8n
+  # Redis Cache (optional, for future use)
+  redis:
+    image: redis:7-alpine
+    container_name: finanzas_redis
     restart: unless-stopped
-    environment:
-      # Database Configuration
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=${N8N_DB:-n8n}
-      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER:-n8n}
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD:-n8n_password}
-      
-      # n8n Configuration
-      - N8N_HOST=${NGROK_HOST}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - N8N_EDITOR_BASE_URL=https://${NGROK_HOST}
-      - WEBHOOK_URL=https://${NGROK_HOST}/
-      - N8N_PATH=/
-      - GENERIC_TIMEZONE=${TIMEZONE:-America/Mexico_City}
-      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
-      
-      # Security
-      - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-change_this_password}
-      - N8N_SECURE_COOKIE=false
-      - N8N_PAYLOAD_SIZE_MAX=16
-      
-      # IMPORTANT: Webhooks must be accessible without auth
-      # If webhooks fail, you may need to whitelist webhook paths
-      
-      # WhatsApp specific
-      - N8N_SKIP_WEBHOOK_DEREGISTRATION_SHUTDOWN=true
-      
-      # Execution
-      - EXECUTIONS_MODE=regular
-      - EXECUTIONS_TIMEOUT=${EXECUTIONS_TIMEOUT:-300}
-      - EXECUTIONS_TIMEOUT_MAX=${EXECUTIONS_TIMEOUT_MAX:-600}
-      
-      # Additional Settings
-      - N8N_METRICS=true
-      - N8N_LOG_LEVEL=${N8N_LOG_LEVEL:-info}
-      - N8N_DIAGNOSTICS_ENABLED=${N8N_DIAGNOSTICS_ENABLED:-false}
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n_workflows:/home/node/.n8n/workflows
     ports:
-      - "${N8N_PORT:-5678}:5678"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:5678/healthz']
-      interval: 30s
-      timeout: 10s
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 60s
     networks:
       - finanzas_network
 
@@ -165,6 +117,5 @@ volumes:
     driver: local
   minio_data:
     driver: local
-  n8n_data:
+  redis_data:
     driver: local
-

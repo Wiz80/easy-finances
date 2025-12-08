@@ -12,6 +12,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.account import Account
+    from app.models.budget import BudgetFundingSource
     from app.models.expense import Expense
 
 
@@ -58,6 +59,9 @@ class Card(Base):
     account: Mapped["Account"] = relationship("Account", back_populates="cards")
     expenses: Mapped[list["Expense"]] = relationship(
         "Expense", back_populates="card", cascade="all, delete-orphan"
+    )
+    budget_funding_sources: Mapped[list["BudgetFundingSource"]] = relationship(
+        "BudgetFundingSource", back_populates="card"
     )
 
     def __repr__(self) -> str:

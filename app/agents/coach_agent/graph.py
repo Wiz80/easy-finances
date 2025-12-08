@@ -9,29 +9,29 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_openai import ChatOpenAI
 
 from app.agents.coach_agent.state import CoachAgentState
-from app.agents.coach_agent.mcp_client import get_mcp_tools
+from app.agents.coach_agent.tools import get_coach_tools
 from app.prompts.coach_agent import COACH_SYSTEM_PROMPT
 from app.config import settings
 
 
-async def create_coach_graph():
+def create_coach_graph():
     """
     Create the Coach Agent LangGraph.
     
     Flow:
     1. call_model: LLM decides which tool to call
-    2. tools: Execute MCP tools (generate_sql, run_sql_query)
+    2. tools: Execute tools (generate_sql, run_sql_query, etc.)
     3. call_model: LLM analyzes results and responds
     
     Returns:
         Compiled LangGraph
     """
-    # Load MCP tools
-    tools = await get_mcp_tools()
+    # Load local tools
+    tools = get_coach_tools()
     
     # Initialize LLM
     model = ChatOpenAI(
-        model=settings.llm_provider == "openai" and "gpt-4o" or "gpt-4o",
+        model="gpt-4o",
         api_key=settings.openai_api_key,
         temperature=0.1,
     )
@@ -68,4 +68,3 @@ async def create_coach_graph():
     builder.add_edge("tools", "call_model")
     
     return builder.compile()
-

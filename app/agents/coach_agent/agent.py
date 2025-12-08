@@ -34,11 +34,11 @@ class CoachAgentResult:
 _compiled_graph = None
 
 
-async def get_graph():
+def get_graph():
     """Get or create the compiled graph."""
     global _compiled_graph
     if _compiled_graph is None:
-        _compiled_graph = await create_coach_graph()
+        _compiled_graph = create_coach_graph()
     return _compiled_graph
 
 
@@ -52,7 +52,7 @@ async def ask_coach(
     
     The coach will:
     1. Analyze the question
-    2. Generate SQL using the MCP server
+    2. Generate SQL using Vanna AI
     3. Execute the query
     4. Analyze results and provide a human-friendly response
     
@@ -83,7 +83,7 @@ async def ask_coach(
     
     try:
         # Get compiled graph
-        graph = await get_graph()
+        graph = get_graph()
         
         # Prepare input with user context
         input_message = f"""Usuario ID: {user_id}
@@ -150,4 +150,3 @@ def reset_graph():
     """Reset the cached graph."""
     global _compiled_graph
     _compiled_graph = None
-

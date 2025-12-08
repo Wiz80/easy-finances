@@ -1,13 +1,10 @@
 #!/bin/bash
 set -e
 
-# Create n8n database if it doesn't exist
+# Create testing database for pytest
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-    CREATE USER $POSTGRES_NON_ROOT_USER WITH PASSWORD '$POSTGRES_NON_ROOT_PASSWORD';
-    CREATE DATABASE n8n OWNER $POSTGRES_NON_ROOT_USER;
-    GRANT ALL PRIVILEGES ON DATABASE n8n TO $POSTGRES_NON_ROOT_USER;
+    CREATE DATABASE finanzas_test OWNER $POSTGRES_USER;
+    GRANT ALL PRIVILEGES ON DATABASE finanzas_test TO $POSTGRES_USER;
 EOSQL
 
-echo "n8n database and user created successfully"
-
-
+echo "finanzas_test database created successfully"
