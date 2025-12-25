@@ -53,6 +53,9 @@ dependencies = [
     "phonenumbers>=8.13.0",
     # HTTP Client (for media downloads)
     "httpx>=0.26.0",
+    # Azure Storage (Blob Storage for conversation cache)
+    "azure-storage-blob>=12.20.0",
+    "azure-identity>=1.15.0",
 ]
 
 # Vanna 2.x dependencies (install separately from git)

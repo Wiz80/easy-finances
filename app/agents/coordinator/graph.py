@@ -77,20 +77,21 @@ def should_continue_or_handoff(state: CoordinatorState) -> Literal["done", "hand
 # Node Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_context_node(state: CoordinatorState) -> CoordinatorState:
+async def load_context_node(state: CoordinatorState) -> CoordinatorState:
     """
-    Load user and conversation context from database.
+    Load user and conversation context.
     
     This node:
-    - Looks up or creates user by phone number
-    - Loads active conversation (if any)
-    - Extracts context data
+    1. First tries to load conversation from Azure Blob cache (fast path)
+    2. Falls back to database for user/conversation data
+    3. Loads active trip and account info
     """
     from sqlalchemy.orm import Session
     from app.database import SessionLocal
     from app.models import User, ConversationState, Trip
-    from app.storage.user_writer import get_or_create_user
+    from app.storage.user_writer import get_user_by_phone, create_user
     from app.storage.conversation_manager import get_active_conversation
+    from app.config import settings
     
     request_id = state.get("request_id", "unknown")
     phone_number = state["phone_number"]
@@ -98,17 +99,50 @@ def load_context_node(state: CoordinatorState) -> CoordinatorState:
     
     logger.debug("load_context_start", request_id=request_id)
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # Try Azure Blob Cache first (fast path)
+    # ─────────────────────────────────────────────────────────────────────────
+    cached_conversation = None
+    if settings.azure_storage_configured:
+        try:
+            from app.storage.conversation_cache import conversation_cache
+            cached_conversation = await conversation_cache.get(phone_number)
+            
+            if cached_conversation:
+                logger.debug(
+                    "load_context_cache_hit",
+                    request_id=request_id,
+                    flow=cached_conversation.current_flow,
+                    step=cached_conversation.pending_field,
+                )
+        except Exception as e:
+            logger.warning("load_context_cache_error", error=str(e))
+            # Continue with DB fallback
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Load user from database (always needed for persistent data)
+    # ─────────────────────────────────────────────────────────────────────────
     db: Session = SessionLocal()
     try:
         # Get or create user
-        user = get_or_create_user(
-            db=db,
-            phone_number=phone_number,
-            profile_name=profile_name,
-        )
+        user = get_user_by_phone(db, phone_number)
+        if not user:
+            # Create new user
+            result = create_user(
+                db=db,
+                phone_number=phone_number,
+                full_name=profile_name or "Usuario",
+                nickname=profile_name,
+            )
+            if result.success and result.user_id:
+                user = db.query(User).filter(User.id == result.user_id).first()
         
-        # Load active conversation
-        conversation = get_active_conversation(db, user.id)
+        if not user:
+            logger.error("load_context_no_user", request_id=request_id)
+            state["status"] = "error"
+            state["errors"] = ["Could not create or find user"]
+            state["response_text"] = "⚠️ Error al procesar tu solicitud. Por favor intenta de nuevo."
+            return state
         
         # Check for active trip
         active_trip = None
@@ -120,13 +154,16 @@ def load_context_node(state: CoordinatorState) -> CoordinatorState:
         # Get default account
         default_account_id = None
         if user.accounts:
-            # Get first account or the one marked as default
             for account in user.accounts:
                 if account.is_active:
                     default_account_id = account.id
                     break
         
-        # Update state with context
+        # ─────────────────────────────────────────────────────────────────────
+        # Populate state - Use cache if available, otherwise DB
+        # ─────────────────────────────────────────────────────────────────────
+        
+        # User data (always from DB - source of truth)
         state["user_id"] = user.id
         state["user_name"] = user.nickname or user.full_name
         state["home_currency"] = user.home_currency
@@ -136,21 +173,58 @@ def load_context_node(state: CoordinatorState) -> CoordinatorState:
         state["active_trip_id"] = user.current_trip_id
         state["default_account_id"] = default_account_id
         
-        # Conversation context
-        if conversation:
-            state["conversation_id"] = conversation.id
-            state["active_agent"] = conversation.active_agent
-            state["agent_locked"] = conversation.agent_locked
-            state["lock_reason"] = conversation.lock_reason
-            state["current_flow"] = conversation.current_flow
-            state["current_step"] = conversation.current_step
-            state["flow_data"] = conversation.state_data or {}
-            state["handoff_context"] = conversation.handoff_context
-            state["last_bot_message"] = conversation.last_bot_message
+        # Conversation context - from cache if available
+        if cached_conversation and not cached_conversation.is_expired():
+            # Use cached conversation state
+            state["active_agent"] = cached_conversation.active_agent
+            state["agent_locked"] = cached_conversation.agent_locked
+            state["lock_reason"] = cached_conversation.lock_reason
+            state["current_flow"] = cached_conversation.current_flow
+            # Use current_step from cache, fall back to pending_field
+            state["current_step"] = cached_conversation.current_step or cached_conversation.pending_field
+            state["pending_field"] = cached_conversation.pending_field
+            state["flow_data"] = cached_conversation.flow_data or {}
+            state["last_bot_message"] = cached_conversation.last_bot_message
+            state["cache_loaded"] = True
+            
+            # Load conversation_id from cache if available
+            if cached_conversation.conversation_id:
+                from uuid import UUID
+                try:
+                    state["conversation_id"] = UUID(cached_conversation.conversation_id)
+                except (ValueError, TypeError):
+                    pass  # Invalid UUID in cache, will load from DB
+            
+            logger.debug(
+                "load_context_from_cache",
+                request_id=request_id,
+                flow=cached_conversation.current_flow,
+                current_step=cached_conversation.current_step,
+                pending_field=cached_conversation.pending_field,
+                conversation_id=cached_conversation.conversation_id,
+            )
         else:
-            state["conversation_id"] = None
-            state["active_agent"] = None
-            state["agent_locked"] = False
+            # Fall back to DB conversation
+            conversation = get_active_conversation(db, user.id)
+            
+            if conversation:
+                state["conversation_id"] = conversation.id
+                state["active_agent"] = conversation.active_agent
+                state["agent_locked"] = conversation.agent_locked
+                state["lock_reason"] = conversation.lock_reason
+                state["current_flow"] = conversation.current_flow
+                state["current_step"] = conversation.current_step
+                state["pending_field"] = conversation.current_step  # Map step to pending_field
+                state["flow_data"] = conversation.state_data or {}
+                state["handoff_context"] = conversation.handoff_context
+                state["last_bot_message"] = conversation.last_bot_message
+            else:
+                state["conversation_id"] = None
+                state["active_agent"] = None
+                state["agent_locked"] = False
+                state["current_flow"] = "unknown"
+                state["pending_field"] = None
+                state["flow_data"] = {}
         
         state["status"] = "checking_lock"
         
@@ -159,8 +233,9 @@ def load_context_node(state: CoordinatorState) -> CoordinatorState:
             request_id=request_id,
             user_id=str(user.id),
             onboarding_completed=state["onboarding_completed"],
-            has_conversation=conversation is not None,
-            agent_locked=state.get("agent_locked", False),
+            from_cache=state.get("cache_loaded", False),
+            current_flow=state.get("current_flow"),
+            pending_field=state.get("pending_field"),
         )
         
     finally:
@@ -174,8 +249,10 @@ def check_agent_lock_node(state: CoordinatorState) -> CoordinatorState:
     Check if session is locked to an agent.
     
     This node prepares routing decision based on lock status.
+    Also checks for intent change when locked, allowing users to
+    break out of a flow by expressing a clear different intent.
     """
-    from app.agents.common.intents import is_coordinator_command
+    from app.agents.common.intents import is_coordinator_command, detect_intent_fast
     
     request_id = state.get("request_id", "unknown")
     message = state.get("message_body", "")
@@ -206,7 +283,30 @@ def check_agent_lock_node(state: CoordinatorState) -> CoordinatorState:
     # Check for agent lock
     if state.get("agent_locked") and state.get("active_agent"):
         agent_str = state["active_agent"]
-        state["selected_agent"] = _map_agent_string(agent_str)
+        current_agent = _map_agent_string(agent_str)
+        
+        # Check if user wants to change intent (break out of flow)
+        intent_change = _check_intent_change(message, current_agent)
+        
+        if intent_change["changed"] and intent_change["new_agent"]:
+            # User wants to switch - release lock and route to new agent
+            state["selected_agent"] = intent_change["new_agent"]
+            state["routing_method"] = "intent_change"
+            state["routing_reason"] = intent_change.get("reason", "User intent changed")
+            state["routing_confidence"] = intent_change.get("confidence", 0.8)
+            # Mark that we need to release the lock
+            state["new_agent_locked"] = False
+            state["should_update_conversation"] = True
+            logger.debug(
+                "check_lock_intent_change",
+                request_id=request_id,
+                from_agent=agent_str,
+                to_agent=intent_change["new_agent"].value,
+            )
+            return state
+        
+        # Continue with locked agent
+        state["selected_agent"] = current_agent
         state["routing_method"] = "locked"
         state["routing_reason"] = f"Session locked to {agent_str}"
         state["routing_confidence"] = 1.0
@@ -222,6 +322,50 @@ def check_agent_lock_node(state: CoordinatorState) -> CoordinatorState:
     logger.debug("check_lock_unlocked", request_id=request_id)
     
     return state
+
+
+def _check_intent_change(message: str, current_agent: AgentType) -> dict:
+    """
+    Check if user message indicates a change in intent.
+    
+    Uses keyword detection to quickly identify if user wants
+    to do something clearly different from the current agent's scope.
+    
+    Args:
+        message: User's message
+        current_agent: Currently active agent
+        
+    Returns:
+        Dict with: changed, new_agent, reason, confidence
+    """
+    from app.agents.common.intents import detect_intent_fast
+    
+    # Get detected intent from keywords
+    detected = detect_intent_fast(message)
+    
+    # If no clear intent detected, don't change
+    if detected is None:
+        return {"changed": False}
+    
+    # Commands always trigger change
+    if detected == AgentType.COORDINATOR:
+        return {
+            "changed": True,
+            "new_agent": None,  # Will be handled by command handler
+            "reason": "User issued a command",
+            "confidence": 1.0,
+        }
+    
+    # Check if detected intent differs from current agent
+    if detected != current_agent:
+        return {
+            "changed": True,
+            "new_agent": detected,
+            "reason": f"Clear intent change from {current_agent.value} to {detected.value}",
+            "confidence": 0.9,
+        }
+    
+    return {"changed": False}
 
 
 async def detect_intent_node(state: CoordinatorState) -> CoordinatorState:
@@ -407,6 +551,7 @@ def process_response_node(state: CoordinatorState) -> CoordinatorState:
     - Lock management (release/acquire)
     - Handoff preparation
     - State update preparation
+    - Conversation sync from agent response
     """
     request_id = state.get("request_id", "unknown")
     response = state.get("agent_response")
@@ -437,6 +582,19 @@ def process_response_node(state: CoordinatorState) -> CoordinatorState:
     if response.flow_data:
         state["new_flow_data"] = response.flow_data
     
+    # Handle step/pending_field updates from response
+    # This is critical for maintaining conversation context
+    if response.current_step:
+        state["new_step"] = response.current_step
+    elif response.pending_field:
+        state["new_step"] = response.pending_field
+    
+    # If agent already persisted the conversation, use its conversation_id
+    # and mark that we don't need to create a new one
+    if response.conversation_persisted and response.conversation_id:
+        state["conversation_id"] = response.conversation_id
+        state["conversation_already_persisted"] = True
+    
     # Handle handoff context
     if response.wants_handoff and response.handoff_context:
         state["new_handoff_context"] = response.handoff_context
@@ -458,9 +616,16 @@ def process_response_node(state: CoordinatorState) -> CoordinatorState:
     return state
 
 
-def update_state_node(state: CoordinatorState) -> CoordinatorState:
+async def update_state_node(state: CoordinatorState) -> CoordinatorState:
     """
-    Update conversation state in database.
+    Update conversation state in Azure Cache and database.
+    
+    This node:
+    1. Updates the Azure Blob Cache (primary for hot data)
+    2. Updates the database (for persistence) - ONLY if agent didn't already persist
+    
+    The Configuration Agent handles its own persistence, so we skip DB updates
+    when conversation_already_persisted is True.
     """
     from sqlalchemy.orm import Session
     from app.database import SessionLocal
@@ -468,8 +633,10 @@ def update_state_node(state: CoordinatorState) -> CoordinatorState:
         create_conversation,
         update_conversation,
     )
+    from app.config import settings
     
     request_id = state.get("request_id", "unknown")
+    phone_number = state["phone_number"]
     
     if not state.get("should_update_conversation"):
         state["status"] = "completed"
@@ -477,14 +644,94 @@ def update_state_node(state: CoordinatorState) -> CoordinatorState:
     
     logger.debug("update_state_start", request_id=request_id)
     
+    # Determine flow and step - prioritize new_step from agent response
+    new_flow = state.get("new_flow") or state.get("current_flow") or "general"
+    new_step = state.get("new_step") or state.get("pending_field") or "idle"
+    new_flow_data = state.get("new_flow_data") or state.get("flow_data") or {}
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Update Azure Blob Cache (fast path for next request)
+    # Always update cache with the latest state from the agent response
+    # ─────────────────────────────────────────────────────────────────────────
+    if settings.azure_storage_configured:
+        try:
+            from app.storage.conversation_cache import conversation_cache
+            
+            # Use explicit False instead of None to avoid issues
+            agent_locked = state.get("new_agent_locked")
+            if agent_locked is None:
+                agent_locked = state.get("agent_locked", False)
+            
+            await conversation_cache.update_from_state(
+                phone_number=phone_number,
+                user_id=state["user_id"],
+                current_flow=new_flow,
+                current_step=new_step,  # Always pass the step
+                pending_field=new_step if new_step != "idle" else None,
+                flow_data=new_flow_data,
+                user_name=state.get("user_name"),
+                home_currency=state.get("home_currency"),
+                timezone=state.get("timezone"),
+                onboarding_completed=state.get("onboarding_completed", False),
+                active_agent=state.get("new_active_agent") or state.get("active_agent"),
+                agent_locked=agent_locked,
+                lock_reason=state.get("new_lock_reason"),
+                last_user_message=state.get("message_body"),
+                last_bot_message=state.get("response_text"),
+                conversation_id=state.get("conversation_id"),  # Sync conversation_id
+            )
+            
+            logger.debug(
+                "update_state_cache_saved",
+                request_id=request_id,
+                flow=new_flow,
+                step=new_step,
+            )
+        except Exception as e:
+            logger.warning("update_state_cache_error", error=str(e))
+            # Continue with DB update
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Update database (for persistence)
+    # SKIP if the agent already persisted the conversation (e.g., Configuration Agent)
+    # ─────────────────────────────────────────────────────────────────────────
+    if state.get("conversation_already_persisted"):
+        # Agent already handled DB persistence, only update routing fields if needed
+        conversation_id = state.get("conversation_id")
+        if conversation_id and (state.get("new_agent_locked") is not None or state.get("new_active_agent")):
+            db: Session = SessionLocal()
+            try:
+                from app.models import ConversationState as ConvModel
+                conv = db.query(ConvModel).filter(ConvModel.id == conversation_id).first()
+                if conv:
+                    # Only update routing fields, not the conversation state itself
+                    if state.get("new_active_agent") is not None:
+                        conv.active_agent = state["new_active_agent"]
+                    if state.get("new_agent_locked") is not None:
+                        conv.agent_locked = state["new_agent_locked"]
+                    else:
+                        # Use False as default, never None
+                        conv.agent_locked = False
+                    if state.get("new_lock_reason") is not None:
+                        conv.lock_reason = state["new_lock_reason"]
+                    conv.handoff_context = state.get("new_handoff_context")
+                    db.commit()
+            except Exception as e:
+                logger.error("update_state_routing_error", request_id=request_id, error=str(e))
+            finally:
+                db.close()
+        
+        state["status"] = "completed"
+        logger.debug("update_state_complete", request_id=request_id)
+        return state
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Full DB update (for agents that don't persist themselves)
+    # ─────────────────────────────────────────────────────────────────────────
     db: Session = SessionLocal()
     try:
         conversation_id = state.get("conversation_id")
         user_id = state["user_id"]
-        
-        # Determine flow and step
-        new_flow = state.get("new_flow") or state.get("current_flow") or "general"
-        new_step = state.get("new_step") or "idle"
         
         if conversation_id:
             # Update existing conversation
@@ -493,7 +740,7 @@ def update_state_node(state: CoordinatorState) -> CoordinatorState:
                 conversation_id=conversation_id,
                 flow=new_flow,
                 step=new_step,
-                state_data=state.get("new_flow_data"),
+                state_data=new_flow_data,
                 user_message=state.get("message_body"),
                 bot_message=state.get("response_text"),
             )
@@ -504,8 +751,9 @@ def update_state_node(state: CoordinatorState) -> CoordinatorState:
             if conv:
                 if state.get("new_active_agent") is not None:
                     conv.active_agent = state["new_active_agent"]
-                if state.get("new_agent_locked") is not None:
-                    conv.agent_locked = state["new_agent_locked"]
+                # Use False as default, never None
+                agent_locked = state.get("new_agent_locked")
+                conv.agent_locked = agent_locked if agent_locked is not None else False
                 if state.get("new_lock_reason") is not None:
                     conv.lock_reason = state["new_lock_reason"]
                 conv.handoff_context = state.get("new_handoff_context")
@@ -517,18 +765,22 @@ def update_state_node(state: CoordinatorState) -> CoordinatorState:
                 user_id=user_id,
                 flow=new_flow,
                 step=new_step,
-                state_data=state.get("new_flow_data"),
+                state_data=new_flow_data,
             )
             if result.success and result.conversation:
                 conv = result.conversation
                 conv.active_agent = state.get("new_active_agent")
-                conv.agent_locked = state.get("new_agent_locked", False)
+                # Use False as default, never None
+                agent_locked = state.get("new_agent_locked")
+                conv.agent_locked = agent_locked if agent_locked is not None else False
                 conv.lock_reason = state.get("new_lock_reason")
                 conv.handoff_context = state.get("new_handoff_context")
                 db.commit()
                 state["conversation_id"] = conv.id
         
         state["status"] = "completed"
+        
+        logger.debug("update_state_complete", request_id=request_id)
         
     except Exception as e:
         logger.error("update_state_error", request_id=request_id, error=str(e))
@@ -657,5 +909,6 @@ def reset_graph():
     """Reset the cached graph (for testing)."""
     global _compiled_graph
     _compiled_graph = None
+
 
 

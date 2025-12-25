@@ -177,6 +177,20 @@ class Settings(BaseSettings):
     conversation_timeout_minutes: int = Field(default=30)
     max_conversation_messages: int = Field(default=100)
 
+    # =========================================================================
+    # Azure Blob Storage (Conversation Cache)
+    # =========================================================================
+    azure_storage_connection_string: str = Field(default="")
+    azure_storage_account_name: str = Field(default="")
+    azure_storage_account_key: str = Field(default="")
+    azure_conversation_container: str = Field(default="conversation-cache")
+    azure_conversation_ttl_hours: int = Field(default=24)  # TTL for cached conversations
+
+    @property
+    def azure_storage_configured(self) -> bool:
+        """Check if Azure Storage is configured."""
+        return bool(self.azure_storage_connection_string or self.azure_storage_account_name)
+
 
 # Global settings instance
 settings = Settings()

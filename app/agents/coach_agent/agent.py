@@ -6,12 +6,15 @@ Main interface for interacting with the financial coach agent.
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import structlog
 from langchain_core.messages import HumanMessage
 
 from app.agents.coach_agent.graph import create_coach_graph
+
+if TYPE_CHECKING:
+    from app.agents.common.response import AgentResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +31,36 @@ class CoachAgentResult:
     data_summary: dict[str, Any] | None = None
     status: str = "completed"
     errors: list[str] = field(default_factory=list)
+    
+    def to_agent_response(self) -> "AgentResponse":
+        """
+        Convert to unified AgentResponse format.
+        
+        This enables seamless integration with the Coordinator Agent.
+        
+        Returns:
+            AgentResponse with coach query result
+        """
+        from app.agents.common.response import AgentResponse, AgentStatus as UnifiedStatus
+        
+        # Map status
+        unified_status = UnifiedStatus.COMPLETED if self.status == "completed" else UnifiedStatus.ERROR
+        
+        # Coach Agent completes queries in one turn
+        return AgentResponse(
+            response_text=self.response or "No pude procesar tu consulta.",
+            status=unified_status,
+            agent_name="coach",
+            request_id=self.request_id,
+            # Lock management - queries complete in one turn
+            release_lock=True,
+            continue_flow=False,
+            # Handoff back to coordinator
+            handoff_to="coordinator",
+            handoff_reason="query_completed",
+            # Errors
+            errors=self.errors,
+        )
 
 
 # Cache for compiled graph

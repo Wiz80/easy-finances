@@ -113,6 +113,10 @@ class AgentResponse:
     pending_field: str | None = None
     flow_data: dict[str, Any] = field(default_factory=dict)
     
+    # Conversation tracking (for state sync)
+    conversation_id: UUID | None = None
+    conversation_persisted: bool = False  # True if agent already persisted conversation state
+    
     # Errors
     errors: list[str] = field(default_factory=list)
     

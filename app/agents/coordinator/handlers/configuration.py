@@ -2,6 +2,7 @@
 Handler for the Configuration Agent.
 
 Wraps the ConfigurationAgent and converts its response to AgentResponse.
+Uses the agent's native to_agent_response() method for clean conversion.
 """
 
 from typing import Any
@@ -11,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from app.agents.common.response import (
     AgentResponse,
-    AgentStatus,
     error_response,
 )
 from app.logging_config import get_logger
@@ -59,11 +59,6 @@ async def handle_configuration_agent(
             has_conversation=conversation_id is not None,
         )
         
-        # Check if we have handoff context with specific flow
-        target_flow = None
-        if handoff_context:
-            target_flow = handoff_context.get("target_flow")
-        
         # Execute configuration agent
         result = await process_message(
             user_id=user_id,
@@ -76,24 +71,8 @@ async def handle_configuration_agent(
             request_id=request_id,
         )
         
-        # Convert to AgentResponse
-        response = AgentResponse(
-            response_text=result.response_text or "Ocurrió un error.",
-            status=_map_config_status(result.status),
-            agent_name="configuration",
-            request_id=request_id,
-            # Flow state
-            current_flow=result.current_flow,
-            pending_field=result.pending_field,
-            flow_data=result.flow_data,
-            # Lock management
-            release_lock=_should_release_lock(result),
-            continue_flow=result.pending_field is not None,
-            # Handoff (config agent might want to transfer)
-            handoff_to=_check_handoff(result),
-            # Errors
-            errors=result.errors,
-        )
+        # Use agent's native conversion method
+        response = result.to_agent_response(request_id)
         
         logger.debug(
             "configuration_handler_complete",
@@ -117,52 +96,4 @@ async def handle_configuration_agent(
             errors=[str(e)],
             request_id=request_id,
         )
-
-
-def _map_config_status(status: str) -> AgentStatus:
-    """Map configuration agent status to AgentStatus."""
-    mapping = {
-        "completed": AgentStatus.COMPLETED,
-        "awaiting_input": AgentStatus.AWAITING_INPUT,
-        "error": AgentStatus.ERROR,
-        "processing": AgentStatus.AWAITING_INPUT,
-    }
-    return mapping.get(status, AgentStatus.COMPLETED)
-
-
-def _should_release_lock(result) -> bool:
-    """
-    Determine if the lock should be released.
-    
-    Release when:
-    - Flow is completed (no pending field)
-    - Status is error
-    - Flow is "general" (not in a specific flow)
-    """
-    if result.status == "error":
-        return True
-    if result.current_flow == "general":
-        return True
-    if result.pending_field is None and result.status == "completed":
-        return True
-    return False
-
-
-def _check_handoff(result) -> str | None:
-    """
-    Check if configuration agent wants to hand off.
-    
-    Hand off to coordinator when onboarding is complete and
-    no specific flow is active.
-    """
-    # Check flow_data for handoff signals
-    flow_data = result.flow_data or {}
-    if flow_data.get("handoff_to"):
-        return flow_data.get("handoff_to")
-    
-    # After completing onboarding, return to coordinator
-    if result.current_flow == "general" and not result.pending_field:
-        return "coordinator"
-    
-    return None
 

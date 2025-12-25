@@ -19,7 +19,7 @@ Usage:
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import UUID
 
 from app.agents.ie_agent.graph import get_ie_agent_graph
@@ -30,6 +30,9 @@ from app.agents.ie_agent.state import (
     create_initial_state,
 )
 from app.logging_config import get_logger
+
+if TYPE_CHECKING:
+    from app.agents.common.response import AgentResponse
 
 logger = get_logger(__name__)
 
@@ -111,6 +114,98 @@ class IEAgentResult:
             "errors": self.errors,
             "validation_errors": self.validation_errors,
         }
+    
+    def to_agent_response(self, request_id: str | None = None) -> "AgentResponse":
+        """
+        Convert to unified AgentResponse format.
+        
+        This enables seamless integration with the Coordinator Agent.
+        
+        Args:
+            request_id: Optional request ID for tracing
+            
+        Returns:
+            AgentResponse with expense extraction result
+        """
+        from app.agents.common.response import AgentResponse, AgentStatus as UnifiedStatus
+        
+        # Map status
+        status_map = {
+            "completed": UnifiedStatus.COMPLETED,
+            "low_confidence": UnifiedStatus.COMPLETED,
+            "error": UnifiedStatus.ERROR,
+            "pending": UnifiedStatus.AWAITING_INPUT,
+        }
+        unified_status = status_map.get(self.status, UnifiedStatus.COMPLETED)
+        
+        # Build response text
+        response_text = self._build_response_text()
+        
+        # IE Agent usually completes in one turn (no pending field)
+        # Always release lock and hand back to coordinator
+        return AgentResponse(
+            response_text=response_text,
+            status=unified_status,
+            agent_name="ie",
+            request_id=request_id or self._state.get("request_id"),
+            confidence=self.confidence,
+            # Created entity
+            created_expense_id=self.expense_id,
+            # Lock management - IE agent completes in one turn
+            release_lock=True,
+            continue_flow=False,
+            # Handoff back to coordinator
+            handoff_to="coordinator",
+            handoff_reason="expense_completed",
+            # Errors
+            errors=self.errors + self.validation_errors,
+        )
+    
+    def _build_response_text(self) -> str:
+        """Build user-friendly response text."""
+        if self.is_duplicate:
+            return "ℹ️ Este gasto ya fue registrado anteriormente."
+        
+        if self.status == "error":
+            error_msg = self.errors[0] if self.errors else "Error desconocido"
+            return f"⚠️ No pude registrar el gasto: {error_msg}"
+        
+        if self.status == "low_confidence":
+            expense = self.extracted_expense
+            if expense:
+                return (
+                    f"🤔 Registré el gasto pero con poca confianza:\n"
+                    f"• Monto: {expense.amount} {expense.currency}\n"
+                    f"• Descripción: {expense.description or 'Sin descripción'}\n"
+                    f"¿Es correcto? Si no, puedes corregirlo."
+                )
+            return "🤔 No estoy seguro de haber entendido bien. ¿Puedes darme más detalles?"
+        
+        # Success
+        expense = self.extracted_expense
+        if expense:
+            amount_str = f"{expense.amount:,.2f}" if expense.amount else "?"
+            currency = expense.currency or "?"
+            description = expense.description or "Gasto"
+            category = getattr(expense, "category_candidate", "") or ""
+            
+            # Category emoji
+            emoji_map = {
+                "FOOD": "🍔",
+                "LODGING": "🏨",
+                "TRANSPORT": "🚕",
+                "TOURISM": "🎭",
+                "SHOPPING": "🛍️",
+                "MISC": "📦",
+            }
+            category_emoji = emoji_map.get(category.upper(), "💰")
+            
+            return (
+                f"✅ {category_emoji} Gasto registrado:\n"
+                f"• {description}: {amount_str} {currency}"
+            )
+        
+        return "✅ Gasto registrado correctamente."
     
     def __repr__(self) -> str:
         return (

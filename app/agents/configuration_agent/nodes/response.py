@@ -72,6 +72,11 @@ def generate_response_node(state: ConfigurationAgentState) -> ConfigurationAgent
 
 def _check_template_responses(state: ConfigurationAgentState) -> str | None:
     """Check if we should use a template response instead of LLM."""
+    from app.agents.configuration_agent.options import (
+        get_currency_menu,
+        get_timezone_menu,
+    )
+    
     current_flow = state.get("current_flow")
     pending_field = state.get("pending_field")
     intent = state.get("detected_intent")
@@ -82,6 +87,24 @@ def _check_template_responses(state: ConfigurationAgentState) -> str | None:
     if current_flow == "onboarding" and pending_field == "name" and intent in ["greeting", None]:
         name_part = f", {state.get('profile_name')}" if state.get("profile_name") else ""
         return WELCOME_MESSAGE.format(name_part=name_part)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Menu-based selections (no LLM needed!)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    # Currency selection menu
+    if pending_field == "currency":
+        name = flow_data.get("name", state.get("user_name", "Usuario"))
+        return f"¡Perfecto, {name}! 👋\n\n{get_currency_menu()}"
+    
+    # Timezone selection menu
+    if pending_field == "timezone":
+        currency = flow_data.get("currency", "USD")
+        return f"✅ Moneda configurada: *{currency}*\n\n{get_timezone_menu()}"
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Completion messages
+    # ─────────────────────────────────────────────────────────────────────────
     
     # Onboarding complete
     if persist_type == "user_complete_onboarding":

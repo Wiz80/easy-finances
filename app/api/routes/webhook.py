@@ -1,21 +1,22 @@
 """
 Twilio WhatsApp webhook endpoint.
 
-Handles incoming messages from Twilio and routes them to the Configuration Agent.
+Handles incoming messages from Twilio and routes them through the Coordinator Agent.
+The Coordinator handles all routing logic to specialized agents:
+- ConfigurationAgent: User setup, trips, cards, budgets
+- IEAgent: Expense extraction
+- CoachAgent: Financial queries
+
 This module should NOT contain business logic - it's a thin proxy layer.
 """
 
-from datetime import datetime
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, Response
-from sqlalchemy.orm import Session
 
 from app.api.deps import (
     DbSession,
     TwilioClient,
-    get_or_create_user,
     validate_twilio_signature,
 )
 from app.integrations.whatsapp import (
@@ -25,7 +26,6 @@ from app.integrations.whatsapp import (
     parse_twilio_webhook,
 )
 from app.logging_config import get_logger
-from app.models import ConversationState
 
 logger = get_logger(__name__)
 
@@ -33,55 +33,53 @@ router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Conversation State Helpers
+# Agent Router (via Coordinator)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_active_conversation(db: Session, user_id) -> ConversationState | None:
-    """Get the active conversation for a user, if any."""
-    return db.query(ConversationState).filter(
-        ConversationState.user_id == user_id,
-        ConversationState.status == "active"
-    ).first()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Agent Router
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def route_to_agent(
+async def route_to_coordinator(
     phone_number: str,
     message_body: str,
     message_type: str,
-    user_id: UUID,
-    conversation_id: UUID | None,
     profile_name: str | None,
-    db: Session
+    message_sid: str | None = None,
+    media_url: str | None = None,
 ) -> str:
     """
-    Route message to the Configuration Agent.
+    Route message through the Coordinator Agent.
+    
+    The Coordinator handles all routing logic:
+    - New users → ConfigurationAgent (onboarding)
+    - Expense messages → IEAgent
+    - Query messages → CoachAgent
+    - Commands → Coordinator (cancel, menu, help)
     
     Args:
-        phone_number: User's phone number
+        phone_number: User's phone number (e.g., "+573115084628")
         message_body: Text content of the message
         message_type: Type of message (text, audio, image)
-        user_id: User UUID
-        conversation_id: Active conversation UUID (if any)
         profile_name: WhatsApp profile name
-        db: Database session
+        message_sid: Twilio message SID (for idempotency)
+        media_url: URL for media content
         
     Returns:
-        Response text from the agent
+        Response text from the Coordinator
     """
-    from app.agents.configuration_agent import process_message
+    from app.agents.coordinator import process_message
     
     result = await process_message(
-        user_id=user_id,
         phone_number=phone_number,
         message_body=message_body,
-        db=db,
         message_type=message_type,
-        conversation_id=conversation_id,
+        media_url=media_url,
+        message_sid=message_sid,
         profile_name=profile_name,
+    )
+    
+    logger.debug(
+        "coordinator_result",
+        success=result.success,
+        agent=result.agent_used,
+        method=result.routing_method,
     )
     
     return result.response_text
@@ -112,12 +110,15 @@ async def twilio_webhook(
     This endpoint:
     1. Receives incoming WhatsApp messages from Twilio
     2. Parses the message payload
-    3. Identifies or creates the user
-    4. Routes to the Configuration Agent (or appropriate agent)
+    3. Routes ALL messages through the Coordinator Agent
+    4. Coordinator handles user lookup, agent routing, and state management
     5. Sends the response back via Twilio API
     
-    The actual conversation logic is handled by the agent (Phase 3D),
-    NOT by this webhook endpoint.
+    The Coordinator Agent handles:
+    - User creation/lookup
+    - Agent routing (Configuration, IE, Coach)
+    - Sticky sessions and handoffs
+    - Conversation state management
     
     Form Parameters (from Twilio):
         From: Sender phone number (whatsapp:+XXXXXXXXXXX)
@@ -141,32 +142,24 @@ async def twilio_webhook(
     )
     
     try:
-        # Get or create user
-        user = get_or_create_user(db, message.phone_number, message.profile_name)
+        # Get media URL if present
+        media_url = None
+        if message.has_media and message.media_items:
+            media_url = message.media_items[0].url
         
-        # Update last interaction timestamp
-        user.last_whatsapp_interaction = datetime.utcnow()
-        user.last_active_at = datetime.utcnow()
-        db.commit()
-        
-        # Get active conversation (if any)
-        conversation = get_active_conversation(db, user.id)
-        
-        # Check if conversation is expired
-        if conversation and conversation.is_expired:
-            conversation.expire()
-            db.commit()
-            conversation = None
-        
-        # Route to agent for processing
-        response_text = await route_to_agent(
+        # Route ALL messages through Coordinator Agent
+        # The Coordinator handles:
+        # - User creation/lookup
+        # - Agent selection (config, ie, coach)
+        # - Sticky sessions
+        # - Conversation state
+        response_text = await route_to_coordinator(
             phone_number=message.phone_number,
             message_body=message.body,
             message_type=message.message_type.value,
-            user_id=user.id,
-            conversation_id=conversation.id if conversation else None,
             profile_name=message.profile_name,
-            db=db
+            message_sid=message.message_sid,
+            media_url=media_url,
         )
         
         # Send response via Twilio (in background to not block)
@@ -180,7 +173,6 @@ async def twilio_webhook(
         logger.info(
             "webhook_processed",
             message_sid=message.message_sid,
-            user_id=str(user.id),
             response_length=len(response_text)
         )
         

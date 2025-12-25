@@ -2,18 +2,15 @@
 Handler for the IE (Information Extraction) Agent.
 
 Wraps the IEAgent and converts its response to AgentResponse.
+Uses the agent's native to_agent_response() method for clean conversion.
 """
 
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy.orm import Session
-
 from app.agents.common.response import (
     AgentResponse,
-    AgentStatus,
     error_response,
-    success_response,
 )
 from app.logging_config import get_logger
 
@@ -86,27 +83,8 @@ async def handle_ie_agent(
             request_id=request_id,
         )
         
-        # Build response text
-        response_text = _build_expense_response(result)
-        
-        # Convert to AgentResponse
-        response = AgentResponse(
-            response_text=response_text,
-            status=_map_ie_status(result.status),
-            agent_name="ie",
-            request_id=request_id,
-            confidence=result.confidence,
-            # Created entity
-            created_expense_id=result.expense_id,
-            # Lock management - IE agent usually completes in one turn
-            release_lock=True,
-            continue_flow=False,
-            # Handoff back to coordinator after expense
-            handoff_to="coordinator",
-            handoff_reason="expense_completed",
-            # Errors
-            errors=result.errors,
-        )
+        # Use agent's native conversion method
+        response = result.to_agent_response(request_id)
         
         logger.debug(
             "ie_handler_complete",
@@ -142,67 +120,4 @@ def _map_message_type(message_type: str) -> str:
         "document": "receipt",
     }
     return mapping.get(message_type, "text")
-
-
-def _map_ie_status(status: str) -> AgentStatus:
-    """Map IE agent status to AgentStatus."""
-    mapping = {
-        "completed": AgentStatus.COMPLETED,
-        "low_confidence": AgentStatus.COMPLETED,
-        "error": AgentStatus.ERROR,
-        "pending": AgentStatus.AWAITING_INPUT,
-    }
-    return mapping.get(status, AgentStatus.COMPLETED)
-
-
-def _build_expense_response(result) -> str:
-    """Build user-friendly response for expense result."""
-    if result.is_duplicate:
-        return "ℹ️ Este gasto ya fue registrado anteriormente."
-    
-    if result.status == "error":
-        error_msg = result.errors[0] if result.errors else "Error desconocido"
-        return f"⚠️ No pude registrar el gasto: {error_msg}"
-    
-    if result.status == "low_confidence":
-        expense = result.extracted_expense
-        if expense:
-            return (
-                f"🤔 Registré el gasto pero con poca confianza:\n"
-                f"• Monto: {expense.amount} {expense.currency}\n"
-                f"• Descripción: {expense.description or 'Sin descripción'}\n"
-                f"¿Es correcto? Si no, puedes corregirlo."
-            )
-        return "🤔 No estoy seguro de haber entendido bien. ¿Puedes darme más detalles?"
-    
-    # Success
-    expense = result.extracted_expense
-    if expense:
-        amount_str = f"{expense.amount:,.2f}" if expense.amount else "?"
-        currency = expense.currency or "?"
-        description = expense.description or "Gasto"
-        category = expense.category_candidate or ""
-        
-        # Category emoji
-        category_emoji = _get_category_emoji(category)
-        
-        return (
-            f"✅ {category_emoji} Gasto registrado:\n"
-            f"• {description}: {amount_str} {currency}"
-        )
-    
-    return "✅ Gasto registrado correctamente."
-
-
-def _get_category_emoji(category: str) -> str:
-    """Get emoji for expense category."""
-    emoji_map = {
-        "FOOD": "🍔",
-        "LODGING": "🏨",
-        "TRANSPORT": "🚕",
-        "TOURISM": "🎭",
-        "SHOPPING": "🛍️",
-        "MISC": "📦",
-    }
-    return emoji_map.get(category.upper(), "💰")
 

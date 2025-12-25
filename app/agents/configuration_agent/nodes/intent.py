@@ -124,11 +124,20 @@ def _quick_intent_detection(
     """
     message_lower = message.lower().strip()
     
-    # Confirmation patterns
-    if message_lower in ["sí", "si", "yes", "s", "y", "ok", "dale", "correcto", "confirmo"]:
+    # Confirmation patterns - check for phrases that contain confirmations
+    confirm_words = ["sí", "si", "yes", "s", "y", "ok", "dale", "correcto", "confirmo", "confirmar", "de acuerdo", "está bien", "claro"]
+    deny_words = ["no", "cancelar", "cancel", "cambiar", "incorrecto", "mal"]
+    
+    # Check if message is primarily a confirmation (contains confirm words but not deny words)
+    has_confirm = any(word in message_lower for word in confirm_words)
+    has_deny = any(word in message_lower for word in deny_words)
+    
+    # If it's a short message with confirmation words and no deny words, it's a confirm
+    if has_confirm and not has_deny and len(message_lower.split()) <= 4:
         return {"intent": "confirm", "entities": {}}
     
-    if message_lower in ["no", "n", "cancelar", "cancel", "cambiar"]:
+    # If it has deny words without confirm words
+    if has_deny and not has_confirm:
         return {"intent": "deny", "entities": {}}
     
     # Help patterns
@@ -154,9 +163,35 @@ def _quick_intent_detection(
     if any(kw in message_lower for kw in card_keywords):
         return {"intent": "card_add", "entities": {}}
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # Handle numeric/menu selections (1, 2, 3, etc.)
+    # This is the fast path for menu-based inputs - no LLM needed!
+    # ─────────────────────────────────────────────────────────────────────────
+    from app.agents.configuration_agent.options import (
+        CURRENCY_MAP, TIMEZONE_MAP, parse_selection
+    )
+    
+    # Currency selection (number or code)
+    if pending_field == "currency":
+        selection = parse_selection(message, CURRENCY_MAP)
+        if selection:
+            return {
+                "intent": "onboarding_provide_currency",
+                "entities": {"currency": selection}
+            }
+    
+    # Timezone selection (number only)
+    if pending_field == "timezone":
+        selection = parse_selection(message, TIMEZONE_MAP)
+        if selection:
+            return {
+                "intent": "onboarding_provide_timezone",
+                "entities": {"timezone": selection}
+            }
+    
     # During onboarding, try to extract specific entities
     if current_flow == "onboarding":
-        # Check for currency codes
+        # Check for currency codes (fallback if not from menu)
         currencies = ["usd", "cop", "mxn", "eur", "pen", "clp", "ars", "brl", "gbp"]
         for curr in currencies:
             if curr in message_lower or curr.upper() in message:
@@ -165,14 +200,27 @@ def _quick_intent_detection(
                     "entities": {"currency": curr.upper()}
                 }
         
-        # If pending field is name and message looks like a name
-        if pending_field == "name" or (not pending_field and len(message.split()) <= 3):
-            # Assume it's a name if it's short and doesn't match other patterns
-            if len(message) > 1 and len(message) < 50:
-                return {
-                    "intent": "onboarding_provide_name",
-                    "entities": {"name": message.strip()}
-                }
+        # Check for timezone patterns (explicit timezone format)
+        timezone_patterns = ["america/", "europe/", "asia/", "gmt", "utc"]
+        if any(tz in message_lower for tz in timezone_patterns):
+            tz_value = message.strip()
+            return {
+                "intent": "onboarding_provide_timezone",
+                "entities": {"timezone": tz_value}
+            }
+        
+        # Only assume it's a name if pending_field is explicitly "name"
+        # Don't assume short messages are names!
+        if pending_field == "name":
+            # Only accept if it looks like a name (not numbers, not too short)
+            if len(message) >= 2 and len(message) < 50 and not message.isdigit():
+                # Exclude confirmations and other patterns
+                non_name_words = ["sí", "si", "no", "ok", "hola", "ayuda", "help", "cancelar"]
+                if message_lower not in non_name_words:
+                    return {
+                        "intent": "onboarding_provide_name",
+                        "entities": {"name": message.strip()}
+                    }
     
     # No quick match, use LLM
     return None

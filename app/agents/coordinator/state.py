@@ -116,13 +116,20 @@ class CoordinatorState(TypedDict, total=False):
     # State Updates (to persist)
     # =========================================================================
     should_update_conversation: bool
+    conversation_already_persisted: bool  # True if agent already saved conversation
     new_active_agent: str | None  # New agent to set
     new_agent_locked: bool | None  # New lock status
     new_lock_reason: str | None
     new_flow: str | None
     new_step: str | None
+    pending_field: str | None  # Alias for new_step (for backwards compat)
     new_flow_data: dict[str, Any] | None
     new_handoff_context: dict[str, Any] | None
+    
+    # =========================================================================
+    # Cache Status
+    # =========================================================================
+    cache_loaded: bool  # True if context was loaded from Azure cache
     
     # =========================================================================
     # Status & Errors
@@ -207,13 +214,18 @@ def create_initial_state(
         
         # State updates
         should_update_conversation=False,
+        conversation_already_persisted=False,
         new_active_agent=None,
         new_agent_locked=None,
         new_lock_reason=None,
         new_flow=None,
         new_step=None,
+        pending_field=None,
         new_flow_data=None,
         new_handoff_context=None,
+        
+        # Cache status
+        cache_loaded=False,
         
         # Status
         status="loading",

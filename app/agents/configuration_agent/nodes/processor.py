@@ -92,24 +92,25 @@ def _process_onboarding(
     
     # Handle currency provision
     if intent == "onboarding_provide_currency" or entities.get("currency"):
-        currency = entities.get("currency", state.get("message_body", "").upper().strip())
+        from app.agents.configuration_agent.options import CURRENCY_MAP
+        
+        currency = entities.get("currency")
+        if not currency:
+            # Try to parse from message
+            msg = state.get("message_body", "").strip()
+            currency = CURRENCY_MAP.get(msg.lower()) or CURRENCY_MAP.get(msg[0] if msg else "")
         
         # Validate currency
         valid_currencies = ["USD", "COP", "MXN", "EUR", "PEN", "CLP", "ARS", "BRL", "GBP"]
-        if currency not in valid_currencies:
+        if not currency or currency not in valid_currencies:
             return {
                 **state,
                 "flow_data": flow_data,
                 "pending_field": "currency",
-                "response_text": f"No reconozco '{currency}'. Por favor usa uno de: USD, COP, MXN, EUR, PEN",
+                "response_text": "⚠️ No reconozco esa opción. Por favor responde con el *número* de tu elección (1-8).",
             }
         
         flow_data["currency"] = currency
-        
-        # Try to infer timezone
-        suggested_tz = infer_timezone_from_phone(phone)
-        if suggested_tz:
-            flow_data["suggested_timezone"] = suggested_tz
         
         return {
             **state,
@@ -140,12 +141,63 @@ def _process_onboarding(
             **state,
             "flow_data": flow_data,
             "pending_field": "timezone_manual",
-            "response_text": "¿En qué zona horaria te encuentras?\nEjemplos: America/Bogota, America/Mexico_City, America/Lima",
+            "response_text": "¿En qué zona horaria te encuentras?\nEjemplos: America/Bogota, America/Santiago, America/Lima, America/Mexico_City",
         }
     
-    if intent == "onboarding_provide_timezone" or pending_field == "timezone_manual":
-        tz = entities.get("timezone", state.get("message_body", "").strip())
+    # Handle timezone provision (from menu selection)
+    # This handles when pending_field is timezone and user provides a selection
+    should_process_timezone = (
+        intent == "onboarding_provide_timezone" or 
+        pending_field == "timezone_manual" or 
+        (pending_field == "timezone" and intent not in ["confirm", "deny", "greeting", "help"])
+    )
+    
+    if should_process_timezone:
+        from app.agents.configuration_agent.options import TIMEZONE_MAP
+        
+        message_body = state.get("message_body", "").strip().lower()
+        
+        # First try to get timezone from entity (already resolved by intent detector)
+        tz = entities.get("timezone")
+        
+        # If not in entities, try to parse from message
+        if not tz:
+            msg = state.get("message_body", "").strip()
+            tz = TIMEZONE_MAP.get(msg) or TIMEZONE_MAP.get(msg[0] if msg else "")
+        
+        # If still no timezone, check for city/country mentions as fallback
+        if not tz:
+            city_to_timezone = {
+                "santiago": "America/Santiago",
+                "chile": "America/Santiago",
+                "bogota": "America/Bogota",
+                "bogotá": "America/Bogota",
+                "colombia": "America/Bogota",
+                "lima": "America/Lima",
+                "peru": "America/Lima",
+                "perú": "America/Lima",
+                "mexico": "America/Mexico_City",
+                "méxico": "America/Mexico_City",
+                "buenos aires": "America/Argentina/Buenos_Aires",
+                "argentina": "America/Argentina/Buenos_Aires",
+            }
+            
+            for city, tz_value in city_to_timezone.items():
+                if city in message_body:
+                    tz = tz_value
+                    break
+        
+        # If still no valid timezone, ask again
+        if not tz:
+            return {
+                **state,
+                "flow_data": flow_data,
+                "pending_field": "timezone",
+                "response_text": "⚠️ No reconozco esa opción. Por favor responde con el *número* de tu elección (1-9).",
+            }
+        
         flow_data["timezone"] = tz
+        flow_data["suggested_timezone"] = tz
         
         return {
             **state,

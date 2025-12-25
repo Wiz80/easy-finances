@@ -2,6 +2,7 @@
 Handler for the Coach Agent.
 
 Wraps the CoachAgent and converts its response to AgentResponse.
+Uses the agent's native to_agent_response() method for clean conversion.
 """
 
 from typing import Any
@@ -9,7 +10,6 @@ from uuid import UUID
 
 from app.agents.common.response import (
     AgentResponse,
-    AgentStatus,
     error_response,
 )
 from app.logging_config import get_logger
@@ -57,21 +57,8 @@ async def handle_coach_agent(
             request_id=request_id,
         )
         
-        # Convert to AgentResponse
-        response = AgentResponse(
-            response_text=result.response or "No pude procesar tu consulta.",
-            status=_map_coach_status(result.status),
-            agent_name="coach",
-            request_id=request_id,
-            # Lock management - queries are usually one-turn
-            release_lock=True,
-            continue_flow=False,
-            # Handoff back to coordinator
-            handoff_to="coordinator",
-            handoff_reason="query_completed",
-            # Errors
-            errors=result.errors,
-        )
+        # Use agent's native conversion method
+        response = result.to_agent_response()
         
         logger.debug(
             "coach_handler_complete",
@@ -95,13 +82,4 @@ async def handle_coach_agent(
             errors=[str(e)],
             request_id=request_id,
         )
-
-
-def _map_coach_status(status: str) -> AgentStatus:
-    """Map coach agent status to AgentStatus."""
-    mapping = {
-        "completed": AgentStatus.COMPLETED,
-        "error": AgentStatus.ERROR,
-    }
-    return mapping.get(status, AgentStatus.COMPLETED)
 

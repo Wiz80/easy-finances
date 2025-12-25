@@ -22,7 +22,7 @@ Usage:
         print(result.response_text)
 """
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -36,6 +36,9 @@ from app.agents.configuration_agent.state import (
 )
 from app.logging_config import get_logger
 from app.models import ConversationState, User
+
+if TYPE_CHECKING:
+    from app.agents.common.response import AgentResponse
 
 logger = get_logger(__name__)
 
@@ -105,6 +108,81 @@ class ConfigurationAgentResult:
             "pending_field": self.pending_field,
             "errors": self.errors,
         }
+    
+    def to_agent_response(self, request_id: str | None = None) -> "AgentResponse":
+        """
+        Convert to unified AgentResponse format.
+        
+        This enables seamless integration with the Coordinator Agent.
+        
+        Args:
+            request_id: Optional request ID for tracing
+            
+        Returns:
+            AgentResponse with configuration result data
+        """
+        from app.agents.common.response import AgentResponse, AgentStatus as UnifiedStatus
+        
+        # Map status
+        status_map = {
+            "completed": UnifiedStatus.COMPLETED,
+            "awaiting_input": UnifiedStatus.AWAITING_INPUT,
+            "error": UnifiedStatus.ERROR,
+            "processing": UnifiedStatus.AWAITING_INPUT,
+        }
+        unified_status = status_map.get(self.status, UnifiedStatus.COMPLETED)
+        
+        # Determine if we should release the lock
+        # Release when: flow completed, general flow, or error
+        release_lock = (
+            self.status == "error" or
+            self.current_flow == "general" or
+            (self.pending_field is None and self.status == "completed")
+        )
+        
+        # Determine handoff
+        handoff_to = None
+        handoff_reason = None
+        if release_lock and self.current_flow == "general" and not self.pending_field:
+            handoff_to = "coordinator"
+            handoff_reason = "configuration_flow_completed"
+        
+        # Check for handoff signals in flow_data
+        if self.flow_data.get("handoff_to"):
+            handoff_to = self.flow_data["handoff_to"]
+            handoff_reason = self.flow_data.get("handoff_reason", "agent_requested")
+        
+        # Get created entities from flow_data
+        created_trip_id = self.flow_data.get("created_trip_id")
+        created_budget_id = self.flow_data.get("created_budget_id")
+        created_card_id = self.flow_data.get("created_card_id")
+        
+        return AgentResponse(
+            response_text=self.response_text or "Ocurrió un error.",
+            status=unified_status,
+            agent_name="configuration",
+            request_id=request_id or self._state.get("request_id"),
+            # Flow state
+            current_flow=self.current_flow,
+            current_step=self.pending_field or "idle",  # Map pending_field to current_step
+            pending_field=self.pending_field,
+            flow_data=self.flow_data,
+            # Conversation tracking - Configuration Agent already persists conversation
+            conversation_id=self.conversation_id,
+            conversation_persisted=True,  # Configuration Agent handles its own persistence
+            # Lock management
+            release_lock=release_lock,
+            continue_flow=self.pending_field is not None,
+            # Handoff
+            handoff_to=handoff_to,
+            handoff_reason=handoff_reason,
+            # Created entities
+            created_trip_id=UUID(created_trip_id) if created_trip_id else None,
+            created_budget_id=UUID(created_budget_id) if created_budget_id else None,
+            created_card_id=UUID(created_card_id) if created_card_id else None,
+            # Errors
+            errors=self.errors,
+        )
     
     def __repr__(self) -> str:
         return (
