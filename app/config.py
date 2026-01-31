@@ -139,6 +139,56 @@ class Settings(BaseSettings):
         )
 
     # =========================================================================
+    # Redis Configuration (Optional - for caching)
+    # =========================================================================
+    redis_host: str = Field(default="localhost")
+    redis_port: int = Field(default=6379)
+    redis_password: str | None = Field(default=None)
+    redis_db: int = Field(default=0)
+    redis_enabled: bool = Field(default=False)
+
+    @property
+    def redis_url(self) -> str:
+        """Construct Redis connection URL."""
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    # =========================================================================
+    # Exchange Rate API Configuration
+    # =========================================================================
+    exchange_rate_api_key: str = Field(default="")
+    exchange_rate_api_url: str = Field(
+        default="https://v6.exchangerate-api.com/v6"
+    )
+    fx_cache_ttl_seconds: int = Field(default=300)  # 5 minutes for real-time
+    fx_eod_cache_ttl_seconds: int = Field(default=86400)  # 24 hours for EOD rates
+
+    # =========================================================================
+    # Expense Classifier Configuration
+    # =========================================================================
+    classifier_enabled: bool = Field(
+        default=True,
+        description="Enable ML classifier for expense categorization"
+    )
+    classifier_type: Literal["zero_shot", "embeddings"] = Field(
+        default="zero_shot",
+        description="Type of classifier: zero_shot (more accurate) or embeddings (faster)"
+    )
+    classifier_model_name: str = Field(
+        default="facebook/bart-large-mnli",
+        description="HuggingFace model name for classification"
+    )
+    classifier_device: Literal["cpu", "cuda", "mps"] = Field(
+        default="cpu",
+        description="Device for running classifier inference"
+    )
+    classifier_min_confidence: float = Field(
+        default=0.5,
+        description="Minimum confidence threshold for ML classifier to override LLM"
+    )
+
+    # =========================================================================
     # Application Settings
     # =========================================================================
     environment: Literal["development", "staging", "production"] = Field(

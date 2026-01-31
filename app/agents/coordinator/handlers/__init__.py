@@ -9,11 +9,21 @@ from app.agents.coordinator.handlers.configuration import handle_configuration_a
 from app.agents.coordinator.handlers.ie import handle_ie_agent
 from app.agents.coordinator.handlers.coach import handle_coach_agent
 from app.agents.coordinator.handlers.commands import handle_coordinator_command
+from app.agents.coordinator.handlers.ivr import (
+    handle_ivr_onboarding,
+    handle_ivr_budget_creation,
+    handle_ivr_trip_creation,
+    handle_ivr_card_configuration,
+)
 
 __all__ = [
     "handle_configuration_agent",
     "handle_ie_agent",
     "handle_coach_agent",
     "handle_coordinator_command",
+    "handle_ivr_onboarding",
+    "handle_ivr_budget_creation",
+    "handle_ivr_trip_creation",
+    "handle_ivr_card_configuration",
 ]
 

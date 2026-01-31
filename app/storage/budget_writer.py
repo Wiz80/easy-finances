@@ -80,6 +80,65 @@ def get_active_budget_for_trip(db: Session, trip_id: UUID) -> Budget | None:
     ).first()
 
 
+def get_user_active_budgets(db: Session, user_id: UUID) -> list[Budget]:
+    """
+    Get all active budgets for a user.
+    
+    Args:
+        db: Database session
+        user_id: User UUID
+        
+    Returns:
+        List of active Budget objects
+    """
+    return db.query(Budget).filter(
+        Budget.user_id == user_id,
+        Budget.status == "active"
+    ).order_by(Budget.start_date.desc()).all()
+
+
+def link_budget_to_trip(db: Session, budget_id: UUID, trip_id: UUID) -> Budget | None:
+    """
+    Link an existing budget to a trip.
+    
+    Args:
+        db: Database session
+        budget_id: Budget UUID to link
+        trip_id: Trip UUID to link to
+        
+    Returns:
+        Updated Budget or None if not found
+    """
+    try:
+        budget = db.query(Budget).filter(Budget.id == budget_id).first()
+        if not budget:
+            logger.warning("link_budget_not_found", budget_id=str(budget_id))
+            return None
+        
+        budget.trip_id = trip_id
+        budget.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(budget)
+        
+        logger.info(
+            "budget_linked_to_trip",
+            budget_id=str(budget_id),
+            trip_id=str(trip_id)
+        )
+        
+        return budget
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "link_budget_to_trip_failed",
+            budget_id=str(budget_id),
+            trip_id=str(trip_id),
+            error=str(e)
+        )
+        return None
+
+
 def create_budget(
     db: Session,
     user_id: UUID,
@@ -154,6 +213,120 @@ def create_budget(
         db.rollback()
         logger.error("create_budget_failed", user_id=str(user_id), error=str(e), exc_info=True)
         return BudgetWriteResult(success=False, error=str(e))
+
+
+def create_budget_and_set_current(
+    db: Session,
+    user: User,
+    name: str,
+    amount: Decimal,
+    currency: str,
+    start_date: date,
+    end_date: date,
+    trip_id: UUID | None = None,
+) -> Budget:
+    """
+    Create a new budget, set it as user's current_budget, and add default allocation.
+    
+    This is the preferred method for IVR budget creation. It:
+    1. Creates the budget
+    2. Adds an "Unexpected Expenses" allocation for the full amount
+    3. Sets the budget as the user's current_budget
+    
+    Args:
+        db: Database session
+        user: User model instance
+        name: Budget name
+        amount: Total budget amount
+        currency: Currency code (ISO 4217)
+        start_date: Budget start date
+        end_date: Budget end date
+        trip_id: Optional trip to link
+        
+    Returns:
+        Created Budget object
+        
+    Raises:
+        Exception: If creation fails
+    """
+    try:
+        # Create budget
+        budget = Budget(
+            user_id=user.id,
+            trip_id=trip_id,
+            name=name,
+            total_amount=amount,
+            currency=currency,
+            start_date=start_date,
+            end_date=end_date,
+            status="active",
+        )
+        
+        db.add(budget)
+        db.flush()  # Get the ID
+        
+        # Get or create "Gastos Inesperados" category
+        unexpected_category = db.query(Category).filter(
+            Category.slug == "unexpected_expenses"
+        ).first()
+        
+        # If category doesn't exist, try "misc" as fallback
+        if not unexpected_category:
+            unexpected_category = db.query(Category).filter(
+                Category.slug == "misc"
+            ).first()
+        
+        # Create default allocation for the full amount
+        if unexpected_category:
+            allocation = BudgetAllocation(
+                budget_id=budget.id,
+                category_id=unexpected_category.id,
+                allocated_amount=amount,
+                currency=currency,
+                spent_amount=Decimal("0"),
+                alert_threshold_percent=80,
+            )
+            db.add(allocation)
+        
+        # Set as user's current budget
+        user.current_budget_id = budget.id
+        
+        db.commit()
+        db.refresh(budget)
+        db.refresh(user)
+        
+        logger.info(
+            "budget_created_and_set_current",
+            budget_id=str(budget.id),
+            user_id=str(user.id),
+            total=str(amount),
+            currency=currency,
+        )
+        
+        return budget
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            "create_budget_and_set_current_failed",
+            user_id=str(user.id),
+            error=str(e),
+            exc_info=True
+        )
+        raise
+
+
+def get_unexpected_category(db: Session) -> Category | None:
+    """Get the 'Gastos Inesperados' category."""
+    category = db.query(Category).filter(
+        Category.slug == "unexpected_expenses"
+    ).first()
+    
+    if not category:
+        # Fallback to misc
+        category = db.query(Category).filter(Category.slug == "misc").first()
+    
+    return category
 
 
 def create_budget_from_flow_data(

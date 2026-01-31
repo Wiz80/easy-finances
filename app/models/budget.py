@@ -79,7 +79,11 @@ class Budget(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="budgets")
+    user: Mapped["User"] = relationship(
+        "User", 
+        back_populates="budgets",
+        foreign_keys=[user_id]
+    )
     trip: Mapped["Trip | None"] = relationship("Trip", back_populates="budgets")
     allocations: Mapped[list["BudgetAllocation"]] = relationship(
         "BudgetAllocation", back_populates="budget", cascade="all, delete-orphan"

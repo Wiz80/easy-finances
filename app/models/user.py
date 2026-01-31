@@ -74,6 +74,13 @@ class User(Base):
     )
     
     # ─────────────────────────────────────────────────────────────────────────
+    # Location
+    # ─────────────────────────────────────────────────────────────────────────
+    country: Mapped[str | None] = mapped_column(
+        String(2), nullable=True
+    )  # ISO 3166-1 alpha-2, e.g., "CO", "US", "MX"
+    
+    # ─────────────────────────────────────────────────────────────────────────
     # Travel Mode
     # ─────────────────────────────────────────────────────────────────────────
     travel_mode_active: Mapped[bool] = mapped_column(
@@ -84,6 +91,15 @@ class User(Base):
         ForeignKey("trip.id", ondelete="SET NULL", use_alter=True),
         nullable=True
     )  # Active trip reference
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # Active Budget (independent of trip)
+    # ─────────────────────────────────────────────────────────────────────────
+    current_budget_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("budget.id", ondelete="SET NULL", use_alter=True),
+        nullable=True
+    )  # Currently active budget for expense tracking
     
     # ─────────────────────────────────────────────────────────────────────────
     # Notification Preferences
@@ -136,7 +152,10 @@ class User(Base):
         "Expense", back_populates="user", cascade="all, delete-orphan"
     )
     budgets: Mapped[list["Budget"]] = relationship(
-        "Budget", back_populates="user", cascade="all, delete-orphan"
+        "Budget", 
+        back_populates="user", 
+        cascade="all, delete-orphan",
+        foreign_keys="Budget.user_id"
     )
     conversations: Mapped[list["ConversationState"]] = relationship(
         "ConversationState", back_populates="user", cascade="all, delete-orphan"
@@ -146,6 +165,13 @@ class User(Base):
     current_trip: Mapped["Trip | None"] = relationship(
         "Trip",
         foreign_keys=[current_trip_id],
+        post_update=True
+    )
+    
+    # Current budget relationship (independent of trip)
+    current_budget: Mapped["Budget | None"] = relationship(
+        "Budget",
+        foreign_keys=[current_budget_id],
         post_update=True
     )
 

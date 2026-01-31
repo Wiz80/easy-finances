@@ -16,13 +16,15 @@ class AgentType(str, Enum):
     Available agent types for routing.
     
     Each agent handles a specific domain:
-    - CONFIGURATION: User setup, trips, cards, budgets
+    - CONFIGURATION: User setup, trips, cards, budgets (LLM-based, deprecated for onboarding)
+    - IVR: Menu-based flows without LLM (onboarding, budget, trip, card)
     - IE: Expense extraction and storage
     - COACH: Financial queries and reports
     - COORDINATOR: Routing and orchestration (not a target)
     """
     
     CONFIGURATION = "configuration"
+    IVR = "ivr"  # Menu-based flows (no LLM)
     IE = "ie"
     COACH = "coach"
     COORDINATOR = "coordinator"  # For handoff back to router
@@ -121,6 +123,31 @@ CONFIG_KEYWORDS = [
     "presupuesto para",
 ]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# IVR Flow Keywords (trigger menu-based flows)
+# ─────────────────────────────────────────────────────────────────────────────
+
+IVR_BUDGET_KEYWORDS = [
+    "crear presupuesto", "nuevo presupuesto", "presupuesto nuevo",
+    "quiero presupuesto", "necesito presupuesto",
+    "agregar presupuesto", "configurar presupuesto",
+]
+
+IVR_TRIP_KEYWORDS = [
+    "nuevo viaje", "crear viaje", "viaje nuevo",
+    "quiero viajar", "voy a viajar", "planeo viajar",
+    "modo viaje", "activar viaje",
+    "configurar viaje", "agregar viaje",
+]
+
+IVR_CARD_KEYWORDS = [
+    "nueva tarjeta", "agregar tarjeta", "configurar tarjeta",
+    "añadir tarjeta", "registrar tarjeta", "mi tarjeta",
+]
+
+# Combined IVR keywords for detection
+IVR_KEYWORDS = IVR_BUDGET_KEYWORDS + IVR_TRIP_KEYWORDS + IVR_CARD_KEYWORDS
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Special Coordinator Commands
@@ -191,6 +218,34 @@ def count_keywords(message: str, keywords: list[str]) -> int:
     return sum(1 for kw in keywords if kw in message_lower)
 
 
+def detect_ivr_flow(message: str) -> str | None:
+    """
+    Detect which IVR flow to trigger based on keywords.
+    
+    Args:
+        message: User message text
+        
+    Returns:
+        Flow name ("budget", "trip", "card") or None
+    """
+    message_lower = message.lower()
+    
+    # Check each IVR flow type
+    for keyword in IVR_BUDGET_KEYWORDS:
+        if keyword in message_lower:
+            return "budget"
+    
+    for keyword in IVR_TRIP_KEYWORDS:
+        if keyword in message_lower:
+            return "trip"
+    
+    for keyword in IVR_CARD_KEYWORDS:
+        if keyword in message_lower:
+            return "card"
+    
+    return None
+
+
 def detect_intent_fast(message: str) -> AgentType | None:
     """
     Fast intent detection using keyword matching.
@@ -211,6 +266,11 @@ def detect_intent_fast(message: str) -> AgentType | None:
     if is_cmd:
         return AgentType.COORDINATOR
     
+    # Check for IVR flow keywords (menu-based configuration)
+    ivr_flow = detect_ivr_flow(message)
+    if ivr_flow:
+        return AgentType.IVR
+    
     # Count keywords for each agent type
     expense_score = count_keywords(message_lower, EXPENSE_KEYWORDS)
     query_score = count_keywords(message_lower, QUERY_KEYWORDS)
@@ -224,9 +284,10 @@ def detect_intent_fast(message: str) -> AgentType | None:
     if query_score >= 2 and query_score > expense_score:
         return AgentType.COACH
     
-    # Clear winner: config keywords
+    # Clear winner: config keywords (for non-IVR configuration)
     if config_score >= 1 and config_score > expense_score and config_score > query_score:
-        return AgentType.CONFIGURATION
+        # Redirect config to IVR for budget/trip/card flows
+        return AgentType.IVR
     
     # Single strong expense indicator (common pattern: "50 soles taxi")
     if expense_score == 1 and query_score == 0 and config_score == 0:
@@ -242,7 +303,8 @@ def detect_intent_fast(message: str) -> AgentType | None:
 def get_agent_description(agent_type: AgentType) -> str:
     """Get human-readable description of an agent."""
     descriptions = {
-        AgentType.CONFIGURATION: "Configuración (viajes, tarjetas, presupuestos)",
+        AgentType.CONFIGURATION: "Configuración (viajes, tarjetas, presupuestos) - LLM",
+        AgentType.IVR: "Configuración rápida (onboarding, presupuestos, viajes, tarjetas)",
         AgentType.IE: "Registro de gastos",
         AgentType.COACH: "Consultas y reportes financieros",
         AgentType.COORDINATOR: "Coordinador",

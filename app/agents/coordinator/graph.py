@@ -271,13 +271,14 @@ def check_agent_lock_node(state: CoordinatorState) -> CoordinatorState:
     state["is_command"] = False
     state["command_action"] = None
     
-    # Check onboarding status
+    # Check onboarding status - use IVR instead of LLM-based configuration
     if not state.get("onboarding_completed", False):
-        state["selected_agent"] = AgentType.CONFIGURATION
-        state["routing_method"] = "onboarding"
-        state["routing_reason"] = "Onboarding not completed"
+        state["selected_agent"] = AgentType.IVR
+        state["routing_method"] = "onboarding_ivr"
+        state["routing_reason"] = "Onboarding via IVR (no LLM)"
         state["routing_confidence"] = 1.0
-        logger.debug("check_lock_onboarding", request_id=request_id)
+        state["ivr_flow"] = "onboarding"
+        logger.debug("check_lock_onboarding_ivr", request_id=request_id)
         return state
     
     # Check for agent lock
@@ -465,11 +466,17 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
     """
     from sqlalchemy.orm import Session
     from app.database import SessionLocal
+    from app.models import User
     from app.agents.coordinator.handlers import (
         handle_configuration_agent,
         handle_ie_agent,
         handle_coach_agent,
+        handle_ivr_onboarding,
+        handle_ivr_budget_creation,
+        handle_ivr_trip_creation,
+        handle_ivr_card_configuration,
     )
+    from app.agents.common.intents import detect_ivr_flow
     
     request_id = state.get("request_id", "unknown")
     selected_agent = state.get("selected_agent", AgentType.UNKNOWN)
@@ -482,7 +489,77 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
     
     db: Session = SessionLocal()
     try:
-        if selected_agent == AgentType.CONFIGURATION:
+        # Handle IVR flows (menu-based, no LLM)
+        if selected_agent == AgentType.IVR:
+            # Load user for IVR handler
+            user = db.query(User).filter(User.id == state["user_id"]).first()
+            if not user:
+                from app.agents.common.response import error_response
+                response = error_response(
+                    text="⚠️ Error: Usuario no encontrado.",
+                    agent_name="ivr",
+                    errors=["User not found"],
+                    request_id=request_id,
+                )
+            else:
+                # Determine which IVR flow to use
+                ivr_flow = state.get("ivr_flow")
+                current_flow = state.get("current_flow", "")
+                
+                # Check if we're continuing an existing IVR flow
+                if current_flow in ("onboarding", "budget_creation", "trip_creation", "card_configuration"):
+                    ivr_flow = current_flow.replace("_creation", "").replace("_configuration", "")
+                
+                # Or detect from message
+                if not ivr_flow:
+                    ivr_flow = detect_ivr_flow(state["message_body"]) or "budget"
+                
+                if ivr_flow == "onboarding" or user.needs_onboarding:
+                    response = await handle_ivr_onboarding(
+                        user=user,
+                        message_body=state["message_body"],
+                        db=db,
+                        request_id=request_id,
+                    )
+                elif ivr_flow == "budget":
+                    response = await handle_ivr_budget_creation(
+                        user=user,
+                        message_body=state["message_body"],
+                        current_step=state.get("current_step") or state.get("pending_field"),
+                        flow_data=state.get("flow_data", {}),
+                        db=db,
+                        request_id=request_id,
+                    )
+                elif ivr_flow == "trip":
+                    response = await handle_ivr_trip_creation(
+                        user=user,
+                        message_body=state["message_body"],
+                        current_step=state.get("current_step") or state.get("pending_field"),
+                        flow_data=state.get("flow_data", {}),
+                        db=db,
+                        request_id=request_id,
+                    )
+                elif ivr_flow == "card":
+                    response = await handle_ivr_card_configuration(
+                        user=user,
+                        message_body=state["message_body"],
+                        current_step=state.get("current_step") or state.get("pending_field"),
+                        flow_data=state.get("flow_data", {}),
+                        db=db,
+                        request_id=request_id,
+                    )
+                else:
+                    # Default to budget creation
+                    response = await handle_ivr_budget_creation(
+                        user=user,
+                        message_body=state["message_body"],
+                        current_step=state.get("current_step"),
+                        flow_data=state.get("flow_data", {}),
+                        db=db,
+                        request_id=request_id,
+                    )
+        
+        elif selected_agent == AgentType.CONFIGURATION:
             response = await handle_configuration_agent(
                 user_id=state["user_id"],
                 phone_number=state["phone_number"],

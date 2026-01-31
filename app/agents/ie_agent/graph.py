@@ -21,7 +21,7 @@ Graph Flow:
                                          ▼         │
                                     validate ──────┤
                                          │         │
-                                         ├─ pass ─▶ store_expense ─┘
+                                         ├─ pass ─▶ lookup_fx_rate ─▶ store_expense ─┘
                                          │
                                          └─ fail ──────────────────┘
 """
@@ -36,6 +36,7 @@ from app.agents.ie_agent.nodes import (
     finalize_node,
     get_extraction_route,
     get_storage_route,
+    lookup_fx_rate_node,
     router_node,
     store_expense_node,
     validate_extraction_node,
@@ -78,6 +79,9 @@ def build_ie_agent_graph() -> StateGraph:
     # Validation node - checks extracted data
     graph.add_node("validate", validate_extraction_node)
     
+    # FX conversion node - gets exchange rate if currencies differ
+    graph.add_node("lookup_fx_rate", lookup_fx_rate_node)
+    
     # Storage node - persists to database
     graph.add_node("store_expense", store_expense_node)
     
@@ -111,15 +115,18 @@ def build_ie_agent_graph() -> StateGraph:
     # error node -> finalize (skip storage)
     graph.add_edge("error", "finalize")
     
-    # validate -> conditional routing to storage or finalize
+    # validate -> conditional routing to FX lookup or finalize
     graph.add_conditional_edges(
         "validate",
         get_storage_route,
         {
-            "store_expense": "store_expense",
+            "store_expense": "lookup_fx_rate",  # Route to FX lookup first
             "end": "finalize",
         }
     )
+    
+    # lookup_fx_rate -> store_expense (always proceed after FX lookup)
+    graph.add_edge("lookup_fx_rate", "store_expense")
     
     # store_expense -> finalize
     graph.add_edge("store_expense", "finalize")

@@ -1,61 +1,79 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-3.13/
-.venv/
-venv/
-ENV/
-env/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Environment files
-.env
+# =============================================================================
+# .dockerignore - Excluir archivos del build de Docker
+# =============================================================================
 
 # Git
-.git/
+.git
 .gitignore
+.gitattributes
 
-# Documentation
+# Entornos virtuales
+.venv
+venv
+env
+.env
+.env.*
+!.env.example
+
+# Cache de Python
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.egg-info
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+.cursor
+
+# Documentación
+docs/
 *.md
 !README.md
 
-# Tests
+# Tests (no necesarios en producción)
 tests/
-test_*.py
-*_test.py
+pytest.ini
 
-# Logs
+# Docker compose (no se incluyen en la imagen)
+docker-compose*.yml
+Dockerfile*
+
+# Scripts de desarrollo
+scripts/
+Makefile
+
+# Archivos de configuración de desarrollo
+.pre-commit-config.yaml
+.editorconfig
+
+# Logs y datos locales
 *.log
 logs/
+data/
 
-# OS
+# Notebooks
+*.ipynb
+.ipynb_checkpoints
+
+# Archivos temporales
+tmp/
+temp/
+*.tmp
+*.temp
+
+# OS files
 .DS_Store
 Thumbs.db
 
-# Docker volumes
-postgres_data/
-qdrant_storage/
-qdrant_snapshots/
-n8n_data/
-n8n_workflows/
-
-*.jpg
-*.png
-*.pdf
-*.docx
-*.doc
-*.xls
-*.xlsx
-*.ppt
-*.pptx
-
-
+# Modelos ML grandes (si existen localmente)
+models/*.bin
+models/*.pt
+*.onnx

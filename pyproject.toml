@@ -56,6 +56,12 @@ dependencies = [
     # Azure Storage (Blob Storage for conversation cache)
     "azure-storage-blob>=12.20.0",
     "azure-identity>=1.15.0",
+    # ML Classification (Expense Categorization)
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "sentence-transformers>=2.5.0",
+    "scikit-learn>=1.4.0",
+    "datasets>=2.18.0",
 ]
 
 # Vanna 2.x dependencies (install separately from git)

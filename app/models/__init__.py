@@ -7,6 +7,7 @@ from app.models.account import Account
 from app.models.budget import Budget, BudgetAllocation, BudgetFundingSource
 from app.models.card import Card
 from app.models.category import Category
+from app.models.classification_feedback import ClassificationFeedback
 from app.models.conversation import ConversationState
 from app.models.expense import Expense
 from app.models.receipt import Receipt
@@ -18,6 +19,7 @@ __all__ = [
     "Account",
     "Card",
     "Category",
+    "ClassificationFeedback",
     "Trip",
     "Expense",
     "Receipt",

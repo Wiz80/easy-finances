@@ -76,6 +76,29 @@ class ExtractedExpense(BaseModel):
         description="Additional notes or context",
         max_length=1000,
     )
+    # ─────────────────────────────────────────────────────────────────────────
+    # Installment Support (for credit card payments)
+    # ─────────────────────────────────────────────────────────────────────────
+    installments: int = Field(
+        default=1,
+        description="Number of installments for credit card payments (e.g., '3 cuotas' = 3)",
+        ge=1,
+        le=48,  # Max 4 years of monthly payments
+        examples=[1, 3, 6, 12],
+    )
+    # ─────────────────────────────────────────────────────────────────────────
+    # Classification Metadata
+    # ─────────────────────────────────────────────────────────────────────────
+    category_confidence: float = Field(
+        default=0.0,
+        description="Confidence score for category classification (0.0 to 1.0)",
+        ge=0.0,
+        le=1.0,
+    )
+    category_source: Literal["llm", "ml_classifier", "zero_shot", "embeddings", "default"] = Field(
+        default="llm",
+        description="Source of category classification",
+    )
     confidence: float = Field(
         ...,
         description="Confidence score for the extraction (0.0 to 1.0)",

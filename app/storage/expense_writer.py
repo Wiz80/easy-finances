@@ -1,6 +1,7 @@
 """
 Expense writer module for persisting extracted expense data.
 Handles idempotency via source_meta (msg_id or content hash).
+Supports budget synchronization when user has an active budget.
 """
 
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from sqlalchemy.orm import Session
 
 from app.logging_config import get_logger
 from app.models.expense import Expense
+from app.models.user import User
+from app.models.budget import Budget, BudgetAllocation
+from app.models.category import Category
 from app.schemas.extraction import ExtractedExpense
 from app.storage.category_mapper import map_category_candidate
 
@@ -203,6 +207,26 @@ def create_expense(
     # Determine occurred_at: override > extracted > now
     occurred_at = occurred_at_override or extracted.occurred_at or datetime.utcnow()
     
+    # Handle installments
+    installments_total = getattr(extracted, 'installments', 1) or 1
+    installment_amount = None
+    total_debt_amount = None
+    
+    if installments_total > 1:
+        # Calculate installment amount (amount per payment)
+        installment_amount = (extracted.amount / Decimal(installments_total)).quantize(
+            Decimal("0.01")
+        )
+        # Total debt is the full purchase amount
+        total_debt_amount = extracted.amount
+        
+        logger.info(
+            "installment_expense_detected",
+            total=float(extracted.amount),
+            installments=installments_total,
+            per_installment=float(installment_amount),
+        )
+    
     # Create expense record
     expense = Expense(
         user_id=user_id,
@@ -221,6 +245,11 @@ def create_expense(
         confidence_score=extracted.confidence,
         status="pending_confirm",
         notes=extracted.notes,
+        # Installment fields
+        installments_total=installments_total,
+        installments_paid=1,  # First installment is paid at purchase
+        installment_amount=installment_amount,
+        total_debt_amount=total_debt_amount,
     )
     
     session.add(expense)
@@ -326,4 +355,194 @@ def get_pending_expenses(
         query = query.filter(Expense.method == method)
     
     return query.order_by(Expense.occurred_at.desc()).all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget Synchronization
+# ─────────────────────────────────────────────────────────────────────────────
+
+def sync_expense_with_budget(
+    session: Session,
+    expense: Expense,
+    user: User,
+) -> dict | None:
+    """
+    Synchronize expense with user's active budget.
+    
+    Updates the spent_amount in the appropriate budget allocation.
+    If no allocation exists for the expense's category, uses the
+    "Gastos Inesperados" (unexpected) allocation.
+    
+    Args:
+        session: Database session
+        expense: Expense to sync
+        user: User who owns the expense
+        
+    Returns:
+        Dict with sync details or None if no budget active
+    """
+    if not user.current_budget_id:
+        logger.debug(
+            "sync_expense_no_budget",
+            expense_id=str(expense.id),
+            user_id=str(user.id),
+        )
+        return None
+    
+    budget = session.query(Budget).filter(
+        Budget.id == user.current_budget_id
+    ).first()
+    
+    if not budget or budget.status != "active":
+        logger.debug(
+            "sync_expense_budget_inactive",
+            expense_id=str(expense.id),
+            budget_id=str(user.current_budget_id) if user.current_budget_id else None,
+        )
+        return None
+    
+    # Find allocation for this expense's category
+    allocation = None
+    if expense.category_id:
+        allocation = session.query(BudgetAllocation).filter(
+            BudgetAllocation.budget_id == budget.id,
+            BudgetAllocation.category_id == expense.category_id,
+        ).first()
+    
+    # If no allocation for category, use unexpected expenses allocation
+    if not allocation:
+        unexpected_category = session.query(Category).filter(
+            Category.slug.in_(["unexpected_expenses", "misc"])
+        ).first()
+        
+        if unexpected_category:
+            allocation = session.query(BudgetAllocation).filter(
+                BudgetAllocation.budget_id == budget.id,
+                BudgetAllocation.category_id == unexpected_category.id,
+            ).first()
+    
+    if not allocation:
+        logger.warning(
+            "sync_expense_no_allocation",
+            expense_id=str(expense.id),
+            budget_id=str(budget.id),
+            category_id=str(expense.category_id) if expense.category_id else None,
+        )
+        return None
+    
+    # Calculate amount to deduct
+    # If currencies differ, we would need FX conversion (Phase 3)
+    # For now, assume same currency or add simple logic
+    amount_to_deduct = expense.amount_original
+    
+    # Handle installments: only deduct current installment
+    if expense.installments_total and expense.installments_total > 1:
+        if expense.installment_amount:
+            amount_to_deduct = expense.installment_amount
+        else:
+            amount_to_deduct = expense.amount_original / expense.installments_total
+    
+    # Simple currency warning (FX will be added in Phase 3)
+    if expense.currency_original != budget.currency:
+        logger.warning(
+            "sync_expense_currency_mismatch",
+            expense_id=str(expense.id),
+            expense_currency=expense.currency_original,
+            budget_currency=budget.currency,
+        )
+        # For now, we still add the amount (FX conversion will be Phase 3)
+    
+    # Update allocation spent amount
+    allocation.spent_amount = (allocation.spent_amount or Decimal("0")) + amount_to_deduct
+    
+    session.flush()
+    
+    sync_result = {
+        "budget_id": str(budget.id),
+        "budget_name": budget.name,
+        "allocation_id": str(allocation.id),
+        "category_id": str(allocation.category_id),
+        "amount_deducted": str(amount_to_deduct),
+        "new_spent_amount": str(allocation.spent_amount),
+        "allocated_amount": str(allocation.allocated_amount),
+        "remaining": str(allocation.allocated_amount - allocation.spent_amount),
+    }
+    
+    logger.info(
+        "expense_synced_with_budget",
+        expense_id=str(expense.id),
+        **sync_result,
+    )
+    
+    # Check if alert threshold reached
+    if allocation.should_alert:
+        logger.info(
+            "budget_alert_threshold_reached",
+            allocation_id=str(allocation.id),
+            percent_used=allocation.percent_used,
+            threshold=allocation.alert_threshold_percent,
+        )
+        sync_result["alert_triggered"] = True
+        sync_result["percent_used"] = allocation.percent_used
+    
+    return sync_result
+
+
+def create_expense_with_budget_sync(
+    session: Session,
+    extracted: ExtractedExpense,
+    user: User,
+    account_id: UUID,
+    source_type: str,
+    trip_id: UUID | None = None,
+    card_id: UUID | None = None,
+    msg_id: str | None = None,
+    content_hash: str | None = None,
+    occurred_at_override: datetime | None = None,
+) -> tuple[ExpenseWriteResult, dict | None]:
+    """
+    Create expense and sync with user's active budget.
+    
+    This is the preferred method for creating expenses when budget
+    tracking is enabled.
+    
+    Args:
+        session: Database session
+        extracted: ExtractedExpense data
+        user: User model instance
+        account_id: Account ID
+        source_type: Source type
+        trip_id: Optional trip ID
+        card_id: Optional card ID
+        msg_id: Optional message ID for idempotency
+        content_hash: Optional content hash
+        occurred_at_override: Optional timestamp override
+        
+    Returns:
+        Tuple of (ExpenseWriteResult, budget_sync_result)
+    """
+    # Create the expense
+    result = create_expense(
+        session=session,
+        extracted=extracted,
+        user_id=user.id,
+        account_id=account_id,
+        source_type=source_type,
+        trip_id=trip_id,
+        card_id=card_id,
+        msg_id=msg_id,
+        content_hash=content_hash,
+        occurred_at_override=occurred_at_override,
+    )
+    
+    # If new expense created, sync with budget
+    budget_sync = None
+    if result.created and user.current_budget_id:
+        budget_sync = sync_expense_with_budget(
+            session=session,
+            expense=result.expense,
+            user=user,
+        )
+    
+    return result, budget_sync
 

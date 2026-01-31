@@ -10,6 +10,7 @@ from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 from app.schemas.extraction import ExtractedExpense, ExtractedReceipt
+from app.tools.fx_lookup import FXRateResult
 
 
 # Input types supported by the IE Agent
@@ -85,6 +86,13 @@ class IEAgentState(TypedDict, total=False):
     content_hash: str | None  # SHA256 hash of input content
     
     # =========================================================================
+    # FX Conversion (when expense currency differs from user's home_currency)
+    # =========================================================================
+    user_home_currency: str | None  # User's home currency for FX conversion
+    fx_conversion: FXRateResult | None  # FX rate used for conversion
+    amount_in_home_currency: float | None  # Expense amount converted to home currency
+    
+    # =========================================================================
     # Validation Results
     # =========================================================================
     confidence: float  # Final confidence score
@@ -155,6 +163,9 @@ def create_initial_state(
         extracted_expense=None,
         extracted_receipt=None,
         content_hash=None,
+        user_home_currency=kwargs.get("user_home_currency"),
+        fx_conversion=None,
+        amount_in_home_currency=None,
         confidence=0.0,
         validation_passed=False,
         validation_errors=[],
