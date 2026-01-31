@@ -63,7 +63,7 @@ jobs:
           OPENAI_API_KEY: "sk-test"
           CLASSIFIER_ENABLED: "false"
         run: |
-          uv sync --frozen
+          uv sync --frozen --group dev
           uv run pytest tests/ -v
 
   # ===========================================================================
