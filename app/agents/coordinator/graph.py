@@ -175,15 +175,34 @@ async def load_context_node(state: CoordinatorState) -> CoordinatorState:
         
         # Conversation context - from cache if available
         if cached_conversation and not cached_conversation.is_expired():
-            # Use cached conversation state
-            state["active_agent"] = cached_conversation.active_agent
-            state["agent_locked"] = cached_conversation.agent_locked
-            state["lock_reason"] = cached_conversation.lock_reason
-            state["current_flow"] = cached_conversation.current_flow
-            # Use current_step from cache, fall back to pending_field
-            state["current_step"] = cached_conversation.current_step or cached_conversation.pending_field
-            state["pending_field"] = cached_conversation.pending_field
-            state["flow_data"] = cached_conversation.flow_data or {}
+            # Check for stale onboarding flow in cache
+            # If user completed onboarding in DB but cache says onboarding, ignore cache flow
+            cached_flow = cached_conversation.current_flow
+            if cached_flow == "onboarding" and user.is_onboarding_complete:
+                logger.debug(
+                    "load_context_stale_onboarding_cache",
+                    request_id=request_id,
+                    message="Ignoring stale onboarding flow from cache - user already completed",
+                )
+                # Clear the stale onboarding-related cache fields
+                state["current_flow"] = None
+                state["current_step"] = None
+                state["pending_field"] = None
+                state["agent_locked"] = False
+                state["lock_reason"] = None
+                state["active_agent"] = None
+                state["flow_data"] = {}
+            else:
+                # Use cached conversation state
+                state["active_agent"] = cached_conversation.active_agent
+                state["agent_locked"] = cached_conversation.agent_locked
+                state["lock_reason"] = cached_conversation.lock_reason
+                state["current_flow"] = cached_flow
+                # Use current_step from cache, fall back to pending_field
+                state["current_step"] = cached_conversation.current_step or cached_conversation.pending_field
+                state["pending_field"] = cached_conversation.pending_field
+                state["flow_data"] = cached_conversation.flow_data or {}
+            
             state["last_bot_message"] = cached_conversation.last_bot_message
             state["cache_loaded"] = True
             
@@ -505,16 +524,35 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
                 # Determine which IVR flow to use
                 ivr_flow = state.get("ivr_flow")
                 current_flow = state.get("current_flow", "")
+                is_continuing_flow = False  # Track if we're continuing an existing IVR flow
                 
-                # Check if we're continuing an existing IVR flow
-                if current_flow in ("onboarding", "budget_creation", "trip_creation", "card_configuration"):
-                    ivr_flow = current_flow.replace("_creation", "").replace("_configuration", "")
+                # FIRST: Check if user explicitly requested a flow via keyword
+                # Keywords like "agregar tarjeta", "crear presupuesto" should ALWAYS start fresh
+                detected_flow_from_keyword = detect_ivr_flow(state["message_body"])
                 
-                # Or detect from message
-                if not ivr_flow:
-                    ivr_flow = detect_ivr_flow(state["message_body"]) or "budget"
+                if detected_flow_from_keyword:
+                    # User explicitly typed a trigger keyword - start a fresh flow
+                    ivr_flow = detected_flow_from_keyword
+                    is_continuing_flow = False
+                elif current_flow in ("onboarding", "budget_creation", "trip_creation", "card_configuration"):
+                    # No explicit keyword - check if we're continuing an existing IVR flow
+                    # BUT don't continue onboarding if user already completed it
+                    if current_flow == "onboarding" and user.is_onboarding_complete:
+                        ivr_flow = "budget"  # Default if no keyword and onboarding done
+                    else:
+                        ivr_flow = current_flow.replace("_creation", "").replace("_configuration", "")
+                        is_continuing_flow = True
+                else:
+                    # No keyword and no existing flow - default to budget
+                    ivr_flow = ivr_flow or "budget"
                 
-                if ivr_flow == "onboarding" or user.needs_onboarding:
+                # When starting a NEW flow (not continuing), reset current_step
+                # Otherwise stale step values like "confirm" from completed flows cause issues
+                ivr_current_step = state.get("current_step") if is_continuing_flow else None
+                ivr_flow_data = state.get("flow_data", {}) if is_continuing_flow else {}
+                
+                # User needs onboarding takes priority
+                if user.needs_onboarding:
                     response = await handle_ivr_onboarding(
                         user=user,
                         message_body=state["message_body"],
@@ -525,8 +563,8 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
                     response = await handle_ivr_budget_creation(
                         user=user,
                         message_body=state["message_body"],
-                        current_step=state.get("current_step") or state.get("pending_field"),
-                        flow_data=state.get("flow_data", {}),
+                        current_step=ivr_current_step,
+                        flow_data=ivr_flow_data,
                         db=db,
                         request_id=request_id,
                     )
@@ -534,8 +572,8 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
                     response = await handle_ivr_trip_creation(
                         user=user,
                         message_body=state["message_body"],
-                        current_step=state.get("current_step") or state.get("pending_field"),
-                        flow_data=state.get("flow_data", {}),
+                        current_step=ivr_current_step,
+                        flow_data=ivr_flow_data,
                         db=db,
                         request_id=request_id,
                     )
@@ -543,8 +581,8 @@ async def route_to_agent_node(state: CoordinatorState) -> CoordinatorState:
                     response = await handle_ivr_card_configuration(
                         user=user,
                         message_body=state["message_body"],
-                        current_step=state.get("current_step") or state.get("pending_field"),
-                        flow_data=state.get("flow_data", {}),
+                        current_step=ivr_current_step,
+                        flow_data=ivr_flow_data,
                         db=db,
                         request_id=request_id,
                     )
@@ -882,6 +920,12 @@ def _map_agent_string(agent_str: str | None) -> AgentType:
     if not agent_str:
         return AgentType.UNKNOWN
     
+    agent_lower = agent_str.lower()
+    
+    # Check for IVR-related strings first (ivr_card, ivr_budget, ivr_trip, ivr_onboarding)
+    if agent_lower.startswith("ivr"):
+        return AgentType.IVR
+    
     mapping = {
         "configuration": AgentType.CONFIGURATION,
         "config": AgentType.CONFIGURATION,
@@ -891,7 +935,7 @@ def _map_agent_string(agent_str: str | None) -> AgentType:
         "query": AgentType.COACH,
         "coordinator": AgentType.COORDINATOR,
     }
-    return mapping.get(agent_str.lower(), AgentType.UNKNOWN)
+    return mapping.get(agent_lower, AgentType.UNKNOWN)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

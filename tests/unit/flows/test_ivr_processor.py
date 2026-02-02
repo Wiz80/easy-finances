@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.flows.ivr_processor import IVRProcessor, IVRResponse
+from app.models.account import Account
 from app.models.user import User
 
 
@@ -528,4 +529,173 @@ class TestIVRResponse:
         assert response.message == "Test"
         assert response.next_step == "currency"
         assert response.data["name"] == "Harrison"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default Account Creation Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDefaultAccountCreation:
+    """Tests for automatic default account creation on onboarding completion."""
+
+    def test_confirm_creates_default_cash_account(
+        self, ivr_processor: IVRProcessor, user_at_confirm_step: User, db: Session
+    ):
+        """Confirming onboarding should create a default cash account."""
+        response = ivr_processor.process_onboarding(
+            user=user_at_confirm_step,
+            current_step="confirm",
+            user_input="1"
+        )
+
+        assert response.flow_complete is True
+        
+        # Verify account was created
+        accounts = db.query(Account).filter(Account.user_id == user_at_confirm_step.id).all()
+        assert len(accounts) == 1
+        
+        account = accounts[0]
+        assert account.name == "Efectivo"
+        assert account.account_type == "cash"
+        assert account.currency == user_at_confirm_step.home_currency
+        assert account.is_default is True
+        assert account.is_active is True
+
+    def test_confirm_returns_account_id_in_data(
+        self, ivr_processor: IVRProcessor, user_at_confirm_step: User, db: Session
+    ):
+        """Onboarding response should include the created account ID."""
+        response = ivr_processor.process_onboarding(
+            user=user_at_confirm_step,
+            current_step="confirm",
+            user_input="si"
+        )
+
+        assert response.flow_complete is True
+        assert "default_account_id" in response.data
+        assert response.data["default_account_id"] is not None
+        
+        # Verify the ID matches the created account
+        account = db.query(Account).filter(Account.user_id == user_at_confirm_step.id).first()
+        assert str(account.id) == response.data["default_account_id"]
+
+    def test_welcome_message_mentions_cash_account(
+        self, ivr_processor: IVRProcessor, user_at_confirm_step: User
+    ):
+        """Welcome message should mention the created cash account."""
+        response = ivr_processor.process_onboarding(
+            user=user_at_confirm_step,
+            current_step="confirm",
+            user_input="1"
+        )
+
+        assert "efectivo" in response.message.lower()
+        assert "método de pago" in response.message.lower() or "pago predeterminado" in response.message.lower()
+
+    def test_does_not_create_duplicate_account(
+        self, ivr_processor: IVRProcessor, user_at_confirm_step: User, db: Session
+    ):
+        """If user already has an account, onboarding should not create another."""
+        # Create an existing account for the user
+        existing_account = Account(
+            user_id=user_at_confirm_step.id,
+            name="Cuenta Existente",
+            account_type="checking",
+            currency="USD",
+            is_default=True,
+            is_active=True,
+        )
+        db.add(existing_account)
+        db.commit()
+        
+        response = ivr_processor.process_onboarding(
+            user=user_at_confirm_step,
+            current_step="confirm",
+            user_input="1"
+        )
+
+        assert response.flow_complete is True
+        
+        # Should still have only one account
+        accounts = db.query(Account).filter(Account.user_id == user_at_confirm_step.id).all()
+        assert len(accounts) == 1
+        assert accounts[0].name == "Cuenta Existente"
+
+    def test_full_flow_creates_account(
+        self, ivr_processor: IVRProcessor, pending_user: User, db: Session
+    ):
+        """Complete onboarding flow should create default account."""
+        # Run through entire flow
+        ivr_processor.process_onboarding(pending_user, None, "hola")
+        ivr_processor.process_onboarding(pending_user, "name", "María")
+        ivr_processor.process_onboarding(pending_user, "currency", "MXN")
+        ivr_processor.process_onboarding(pending_user, "country", "México")
+        ivr_processor.process_onboarding(pending_user, "timezone", "1")
+        response = ivr_processor.process_onboarding(pending_user, "confirm", "1")
+
+        assert response.flow_complete is True
+        
+        # Verify account was created with correct currency
+        account = db.query(Account).filter(Account.user_id == pending_user.id).first()
+        assert account is not None
+        assert account.name == "Efectivo"
+        assert account.currency == "MXN"
+        assert account.is_default is True
+
+
+class TestOnboardingAlreadyCompleted:
+    """Tests for safety check when user has already completed onboarding."""
+
+    @pytest.fixture
+    def completed_user(self, db: Session) -> User:
+        """Create a user that has already completed onboarding."""
+        user = User(
+            id=uuid.uuid4(),
+            phone_number="+573009998888",
+            full_name="Usuario Completo",
+            nickname="Usuario",
+            home_currency="USD",
+            country="CO",
+            timezone="America/Bogota",
+            preferred_language="es",
+            onboarding_status="completed",
+            onboarding_step=None,
+            onboarding_completed_at=datetime.utcnow(),
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    def test_completed_user_does_not_restart_onboarding(
+        self, ivr_processor: IVRProcessor, completed_user: User
+    ):
+        """User who completed onboarding should not restart it."""
+        response = ivr_processor.process_onboarding(
+            user=completed_user,
+            current_step=None,  # This is what triggers the issue
+            user_input="configurar tarjeta"
+        )
+
+        # Should NOT restart onboarding
+        assert response.flow_complete is True
+        assert "ya está configurada" in response.message
+        # User status should remain completed
+        assert completed_user.onboarding_status == "completed"
+        assert completed_user.onboarding_step is None
+
+    def test_completed_user_with_random_message_does_not_restart(
+        self, ivr_processor: IVRProcessor, completed_user: User
+    ):
+        """Any message to completed user should not restart onboarding."""
+        response = ivr_processor.process_onboarding(
+            user=completed_user,
+            current_step=None,
+            user_input="hola"
+        )
+
+        assert response.flow_complete is True
+        assert "ya está configurada" in response.message
+        assert completed_user.onboarding_status == "completed"
 

@@ -1,0 +1,245 @@
+# =============================================================================
+# Infrastructure Workflow - Deploy servicios de infraestructura a Azure VM
+# 
+# Este workflow gestiona:
+#   - PostgreSQL (base de datos principal)
+#   - Redis (cache)
+#   - Qdrant (base de datos vectorial)
+#   - MinIO (object storage)
+#   - Nginx (reverse proxy + SSL)
+#
+# Se ejecuta manualmente o cuando cambian archivos de infraestructura
+# =============================================================================
+
+name: Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - restart
+          - status
+          - logs
+      service:
+        description: 'Specific service (blank for all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - postgres
+          - redis
+          - qdrant
+          - minio
+          - nginx
+
+  push:
+    branches: [main]
+    paths:
+      - 'docker-compose.prod.yml'
+      - 'nginx/**'
+      - 'init-scripts/**'
+
+jobs:
+  # ===========================================================================
+  # Deploy Infrastructure
+  # ===========================================================================
+  deploy-infra:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.inputs.action == 'deploy' || github.event.inputs.action == '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy infrastructure to Azure VM
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SERVICE: ${{ github.event.inputs.service }}
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          envs: SERVICE
+          script: |
+            set -e
+            cd /opt/finanzas
+
+            echo "📥 Pulling latest code..."
+            git pull origin main || true
+
+            echo "🔧 Creating data directories..."
+            sudo mkdir -p /mnt/data/postgres
+            sudo mkdir -p /mnt/data/redis
+            sudo mkdir -p /mnt/data/qdrant/storage
+            sudo mkdir -p /mnt/data/qdrant/snapshots
+            sudo mkdir -p /mnt/data/minio
+            sudo chown -R $USER:$USER /mnt/data
+
+            echo "📦 Pulling latest images..."
+            if [ -z "$SERVICE" ]; then
+              docker-compose -f docker-compose.prod.yml pull postgres redis qdrant minio nginx
+            else
+              docker-compose -f docker-compose.prod.yml pull $SERVICE
+            fi
+
+            echo "🚀 Starting infrastructure services..."
+            if [ -z "$SERVICE" ]; then
+              # Start infrastructure services (not api)
+              docker-compose -f docker-compose.prod.yml up -d postgres redis qdrant minio minio-init nginx
+            else
+              docker-compose -f docker-compose.prod.yml up -d $SERVICE
+            fi
+
+            echo "⏳ Waiting for services to be healthy..."
+            sleep 15
+
+            echo "📊 Checking service status..."
+            docker-compose -f docker-compose.prod.yml ps
+
+            echo "✅ Infrastructure deployment complete!"
+
+      - name: Health check - PostgreSQL
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          script: |
+            docker exec finanzas_postgres pg_isready -U ${POSTGRES_USER:-finanzas_user} && echo "✅ PostgreSQL is healthy" || echo "❌ PostgreSQL check failed"
+
+      - name: Health check - Redis
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          script: |
+            docker exec finanzas_redis redis-cli ping && echo "✅ Redis is healthy" || echo "❌ Redis check failed"
+
+      - name: Health check - Qdrant
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          script: |
+            curl -s http://localhost:6333/ > /dev/null && echo "✅ Qdrant is healthy" || echo "❌ Qdrant check failed"
+
+  # ===========================================================================
+  # Restart Services
+  # ===========================================================================
+  restart:
+    name: Restart Services
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.inputs.action == 'restart' }}
+
+    steps:
+      - name: Restart services
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SERVICE: ${{ github.event.inputs.service }}
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          envs: SERVICE
+          script: |
+            cd /opt/finanzas
+
+            if [ -z "$SERVICE" ]; then
+              echo "🔄 Restarting all infrastructure services..."
+              docker-compose -f docker-compose.prod.yml restart postgres redis qdrant minio nginx
+            else
+              echo "🔄 Restarting $SERVICE..."
+              docker-compose -f docker-compose.prod.yml restart $SERVICE
+            fi
+
+            echo "⏳ Waiting for services..."
+            sleep 10
+
+            docker-compose -f docker-compose.prod.yml ps
+            echo "✅ Restart complete!"
+
+  # ===========================================================================
+  # Check Status
+  # ===========================================================================
+  status:
+    name: Check Status
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.inputs.action == 'status' }}
+
+    steps:
+      - name: Get status
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          script: |
+            cd /opt/finanzas
+
+            echo "📊 Service Status:"
+            echo "=================="
+            docker-compose -f docker-compose.prod.yml ps
+
+            echo ""
+            echo "💾 Disk Usage:"
+            echo "=============="
+            df -h /mnt/data
+
+            echo ""
+            echo "🔍 PostgreSQL:"
+            docker exec finanzas_postgres pg_isready -U ${POSTGRES_USER:-finanzas_user} 2>/dev/null && echo "  Status: ✅ Healthy" || echo "  Status: ❌ Unhealthy"
+
+            echo ""
+            echo "🔍 Redis:"
+            docker exec finanzas_redis redis-cli ping 2>/dev/null && echo "  Status: ✅ Healthy" || echo "  Status: ❌ Unhealthy"
+
+            echo ""
+            echo "🔍 Qdrant:"
+            curl -s http://localhost:6333/ > /dev/null && echo "  Status: ✅ Healthy" || echo "  Status: ❌ Unhealthy"
+
+            echo ""
+            echo "🔍 MinIO:"
+            docker exec finanzas_minio mc ready local 2>/dev/null && echo "  Status: ✅ Healthy" || echo "  Status: ⚠️ Check manually"
+
+  # ===========================================================================
+  # Get Logs
+  # ===========================================================================
+  logs:
+    name: Get Logs
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.inputs.action == 'logs' }}
+
+    steps:
+      - name: Get logs
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SERVICE: ${{ github.event.inputs.service }}
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          envs: SERVICE
+          script: |
+            cd /opt/finanzas
+
+            if [ -z "$SERVICE" ]; then
+              echo "📜 Last 50 lines from all services:"
+              docker-compose -f docker-compose.prod.yml logs --tail=50
+            else
+              echo "📜 Last 100 lines from $SERVICE:"
+              docker-compose -f docker-compose.prod.yml logs --tail=100 $SERVICE
+            fi

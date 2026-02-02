@@ -31,6 +31,7 @@ from app.flows.validators import (
 )
 from app.logging_config import get_logger
 from app.models.user import User
+from app.models.account import Account
 
 logger = get_logger(__name__)
 
@@ -90,6 +91,26 @@ class IVRProcessor:
             current_step=current_step,
             input_preview=user_input[:50] if user_input else None,
         )
+        
+        # Safety check: if user already completed onboarding, don't restart
+        if user.onboarding_status == "completed" and not current_step:
+            logger.warning(
+                "ivr_onboarding_already_complete",
+                user_id=str(user.id),
+                message_preview=user_input[:50] if user_input else None,
+            )
+            return IVRResponse(
+                message=(
+                    "✅ Tu cuenta ya está configurada.\n\n"
+                    "¿Qué deseas hacer?\n"
+                    "• \"registrar gasto\" - anotar un gasto\n"
+                    "• \"crear presupuesto\" - nuevo presupuesto\n"
+                    "• \"nuevo viaje\" - configurar viaje\n"
+                    "• \"configurar tarjeta\" - agregar tarjeta\n"
+                    "• \"ayuda\" - ver opciones"
+                ),
+                flow_complete=True,
+            )
 
         # If no step, start onboarding
         if not current_step or current_step == "start":
@@ -218,6 +239,10 @@ class IVRProcessor:
             user.onboarding_status = "completed"
             user.onboarding_step = None
             user.onboarding_completed_at = datetime.utcnow()
+            
+            # Create default cash account for the user
+            default_account = self._create_default_account(user)
+            
             self.db.commit()
             
             logger.info(
@@ -225,6 +250,7 @@ class IVRProcessor:
                 user_id=str(user.id),
                 currency=user.home_currency,
                 country=user.country,
+                default_account_id=str(default_account.id) if default_account else None,
             )
             
             return IVRResponse(
@@ -235,6 +261,7 @@ class IVRProcessor:
                     "currency": user.home_currency,
                     "country": user.country,
                     "timezone": user.timezone,
+                    "default_account_id": str(default_account.id) if default_account else None,
                 }
             )
         
@@ -317,6 +344,7 @@ class IVRProcessor:
         """Build welcome message after onboarding completion."""
         return (
             f"✅ ¡Listo, {user.display_name}! Tu cuenta está configurada.\n\n"
+            f"💵 Se creó tu cuenta de *Efectivo* como método de pago predeterminado.\n\n"
             f"Ahora puedes:\n\n"
             f"💰 *Registrar gastos*\n"
             f"   Escribe: \"50000 en almuerzo\"\n\n"
@@ -329,6 +357,63 @@ class IVRProcessor:
             f"❓ *Ayuda*\n"
             f"   Escribe: \"ayuda\" o \"menu\""
         )
+
+    def _create_default_account(self, user: User) -> Account | None:
+        """
+        Create a default cash account for the user.
+        
+        This is called at the end of onboarding to ensure the user has
+        at least one account for recording expenses.
+        
+        Args:
+            user: User model to create account for
+            
+        Returns:
+            The created Account or None if creation failed
+        """
+        try:
+            # Check if user already has an account (shouldn't happen during onboarding)
+            existing_account = self.db.query(Account).filter(
+                Account.user_id == user.id
+            ).first()
+            
+            if existing_account:
+                logger.debug(
+                    "user_already_has_account",
+                    user_id=str(user.id),
+                    existing_account_id=str(existing_account.id),
+                )
+                return existing_account
+            
+            # Create default cash account
+            default_account = Account(
+                user_id=user.id,
+                name="Efectivo",
+                account_type="cash",
+                currency=user.home_currency or "USD",
+                is_default=True,
+            )
+            self.db.add(default_account)
+            self.db.flush()  # Get the ID before commit
+            
+            logger.info(
+                "default_account_created",
+                user_id=str(user.id),
+                account_id=str(default_account.id),
+                account_type="cash",
+                currency=default_account.currency,
+            )
+            
+            return default_account
+            
+        except Exception as e:
+            logger.error(
+                "default_account_creation_failed",
+                user_id=str(user.id),
+                error=str(e),
+                exc_info=True,
+            )
+            return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Budget Flow

@@ -1,0 +1,224 @@
+{
+  "version": "1.0",
+  "description": "Golden dataset for SQL generation testing. Questions and expected SQL patterns.",
+  "questions": [
+    {
+      "id": "budget_status_categories",
+      "question": "¿Cuánto he gastado actualmente de mi presupuesto actual y en qué categorías de gastos están mis mayores gastos?",
+      "variations": [
+        "Cuánto llevo gastado del presupuesto y cuáles son mis categorías con más gastos",
+        "Estado de mi presupuesto por categoría",
+        "Resumen de gastos por categoría vs presupuesto"
+      ],
+      "expected_tables": ["expense", "budget", "budget_allocation", "category"],
+      "expected_keywords": ["SUM", "GROUP BY", "category", "budget"],
+      "expected_sql_pattern": "SELECT.*category.*SUM.*FROM.*expense.*JOIN.*category.*WHERE.*user_id.*GROUP BY",
+      "complexity": "high",
+      "category": "budget_analysis"
+    },
+    {
+      "id": "monthly_food_spending",
+      "question": "¿Cuánto he gastado este mes en la categoría de alimentación?",
+      "variations": [
+        "Gastos en comida este mes",
+        "Total gastado en food este mes",
+        "Cuánto llevo en alimentación del mes"
+      ],
+      "expected_tables": ["expense", "category"],
+      "expected_keywords": ["SUM", "amount", "category", "food", "month"],
+      "expected_sql_pattern": "SELECT.*SUM.*amount.*FROM.*expense.*JOIN.*category.*WHERE.*slug.*=.*'food'.*AND.*EXTRACT.*MONTH",
+      "complexity": "medium",
+      "category": "category_filter"
+    },
+    {
+      "id": "purchase_recommendation",
+      "question": "Quisiera comprar algo de 200 dólares, con respecto a mi budget actual y los días que faltan del mes ¿me lo recomiendas?",
+      "variations": [
+        "Puedo gastar 200 dólares más este mes?",
+        "Tengo presupuesto para gastar 200 más?",
+        "Me alcanza el presupuesto para 200 dólares?"
+      ],
+      "expected_tables": ["budget", "budget_allocation", "expense"],
+      "expected_keywords": ["SUM", "budget", "remaining", "total_amount", "spent"],
+      "expected_sql_pattern": "SELECT.*(total_amount|allocated_amount).*spent.*FROM.*budget",
+      "complexity": "high",
+      "category": "budget_recommendation",
+      "requires_calculation": true,
+      "notes": "This question requires comparing remaining budget with purchase amount"
+    },
+    {
+      "id": "credit_card_monthly_count",
+      "question": "¿Cuántos gastos he hecho con tarjeta de crédito este mes y cuánto suma?",
+      "variations": [
+        "Gastos con tarjeta de crédito este mes",
+        "Total y cantidad de transacciones con crédito este mes",
+        "Resumen de pagos con tarjeta de crédito del mes"
+      ],
+      "expected_tables": ["expense", "card"],
+      "expected_keywords": ["COUNT", "SUM", "card", "credit", "month"],
+      "expected_sql_pattern": "SELECT.*COUNT.*SUM.*FROM.*expense.*JOIN.*card.*WHERE.*card_type.*=.*'credit'",
+      "complexity": "medium",
+      "category": "payment_method_analysis"
+    },
+    {
+      "id": "specific_card_expenses",
+      "question": "¿Cuántos gastos he hecho con la tarjeta de crédito Visa?",
+      "variations": [
+        "Gastos con mi Visa",
+        "Cuánto he gastado con la tarjeta Visa",
+        "Transacciones con tarjeta Visa"
+      ],
+      "expected_tables": ["expense", "card"],
+      "expected_keywords": ["COUNT", "card", "name", "Visa"],
+      "expected_sql_pattern": "SELECT.*COUNT.*FROM.*expense.*JOIN.*card.*WHERE.*name.*LIKE.*'%Visa%'",
+      "complexity": "medium",
+      "category": "card_filter"
+    },
+    {
+      "id": "total_monthly_spending",
+      "question": "¿Cuánto he gastado este mes?",
+      "variations": [
+        "Total gastado este mes",
+        "Gastos del mes actual",
+        "Cuánto llevo gastado en el mes"
+      ],
+      "expected_tables": ["expense"],
+      "expected_keywords": ["SUM", "amount", "month", "EXTRACT"],
+      "expected_sql_pattern": "SELECT.*SUM.*amount.*FROM.*expense.*WHERE.*user_id.*EXTRACT.*MONTH",
+      "complexity": "low",
+      "category": "summary"
+    },
+    {
+      "id": "yesterday_spending",
+      "question": "¿Cuánto gasté ayer?",
+      "variations": [
+        "Gastos de ayer",
+        "Total gastado ayer",
+        "Cuánto fue el gasto de ayer"
+      ],
+      "expected_tables": ["expense"],
+      "expected_keywords": ["SUM", "amount", "occurred_at", "CURRENT_DATE", "-1"],
+      "expected_sql_pattern": "SELECT.*SUM.*amount.*FROM.*expense.*WHERE.*occurred_at.*=.*CURRENT_DATE.*-.*1",
+      "complexity": "low",
+      "category": "date_filter"
+    },
+    {
+      "id": "recent_expenses",
+      "question": "Muéstrame los últimos 5 gastos",
+      "variations": [
+        "Últimos 5 gastos",
+        "Mis 5 gastos más recientes",
+        "Lista de últimos 5 gastos"
+      ],
+      "expected_tables": ["expense"],
+      "expected_keywords": ["SELECT", "ORDER BY", "DESC", "LIMIT", "5"],
+      "expected_sql_pattern": "SELECT.*FROM.*expense.*WHERE.*user_id.*ORDER BY.*occurred_at.*DESC.*LIMIT.*5",
+      "complexity": "low",
+      "category": "recent"
+    },
+    {
+      "id": "largest_expense",
+      "question": "¿Cuál es mi gasto más grande este mes?",
+      "variations": [
+        "Gasto más alto del mes",
+        "Mayor gasto este mes",
+        "Cuál fue el gasto más grande"
+      ],
+      "expected_tables": ["expense"],
+      "expected_keywords": ["MAX", "amount", "month"],
+      "expected_sql_pattern": "SELECT.*MAX.*amount.*FROM.*expense.*WHERE.*EXTRACT.*MONTH|ORDER BY.*amount.*DESC.*LIMIT.*1",
+      "complexity": "low",
+      "category": "aggregation"
+    },
+    {
+      "id": "transport_average",
+      "question": "Dame el promedio de gastos en transporte",
+      "variations": [
+        "Promedio de gastos en transporte",
+        "Cuánto gasto en promedio en transporte",
+        "Gasto promedio en taxi y transporte"
+      ],
+      "expected_tables": ["expense", "category"],
+      "expected_keywords": ["AVG", "amount", "category", "transport"],
+      "expected_sql_pattern": "SELECT.*AVG.*amount.*FROM.*expense.*JOIN.*category.*WHERE.*slug.*=.*'transport'",
+      "complexity": "medium",
+      "category": "average"
+    },
+    {
+      "id": "budget_remaining",
+      "question": "¿Cuánto me queda del presupuesto?",
+      "variations": [
+        "Presupuesto restante",
+        "Cuánto falta por gastar del budget",
+        "Saldo disponible del presupuesto"
+      ],
+      "expected_tables": ["budget", "budget_allocation"],
+      "expected_keywords": ["total_amount", "allocated_amount", "spent_amount"],
+      "expected_sql_pattern": "SELECT.*(total_amount.*-.*|allocated_amount.*-.*spent).*FROM.*budget",
+      "complexity": "medium",
+      "category": "budget_analysis"
+    },
+    {
+      "id": "trip_spending",
+      "question": "¿Cuánto he gastado en este viaje?",
+      "variations": [
+        "Total gastos del viaje",
+        "Gastos del viaje actual",
+        "Cuánto llevo gastado en el trip"
+      ],
+      "expected_tables": ["expense", "trip"],
+      "expected_keywords": ["SUM", "amount", "trip_id"],
+      "expected_sql_pattern": "SELECT.*SUM.*amount.*FROM.*expense.*WHERE.*trip_id",
+      "complexity": "medium",
+      "category": "trip_filter"
+    },
+    {
+      "id": "daily_average",
+      "question": "¿Cuál es mi gasto promedio diario este mes?",
+      "variations": [
+        "Promedio diario de gastos",
+        "Cuánto gasto por día en promedio",
+        "Gasto diario promedio del mes"
+      ],
+      "expected_tables": ["expense"],
+      "expected_keywords": ["AVG", "SUM", "COUNT", "DISTINCT", "DATE"],
+      "expected_sql_pattern": "SELECT.*(AVG|SUM.*\\/.*COUNT).*FROM.*expense.*WHERE.*EXTRACT.*MONTH",
+      "complexity": "high",
+      "category": "average"
+    },
+    {
+      "id": "expense_count_by_category",
+      "question": "¿Cuántos gastos tengo por categoría?",
+      "variations": [
+        "Número de gastos por categoría",
+        "Conteo de gastos por categoría",
+        "Cuántas transacciones por categoría"
+      ],
+      "expected_tables": ["expense", "category"],
+      "expected_keywords": ["COUNT", "GROUP BY", "category"],
+      "expected_sql_pattern": "SELECT.*category.*COUNT.*FROM.*expense.*JOIN.*category.*GROUP BY",
+      "complexity": "medium",
+      "category": "grouping"
+    },
+    {
+      "id": "cash_vs_card",
+      "question": "¿Cuánto he gastado en efectivo vs tarjeta?",
+      "variations": [
+        "Comparación efectivo y tarjeta",
+        "Gastos cash vs card",
+        "Cuánto en efectivo y cuánto con tarjeta"
+      ],
+      "expected_tables": ["expense", "card"],
+      "expected_keywords": ["SUM", "CASE", "WHEN", "cash", "card"],
+      "expected_sql_pattern": "SELECT.*SUM.*CASE.*WHEN.*FROM.*expense",
+      "complexity": "high",
+      "category": "payment_method_analysis"
+    }
+  ],
+  "validation_rules": {
+    "must_have_user_id_filter": true,
+    "must_use_parameterized_queries": true,
+    "forbidden_keywords": ["DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE", "ALTER"],
+    "max_execution_time_seconds": 30
+  }
+}
