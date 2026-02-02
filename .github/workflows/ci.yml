@@ -26,7 +26,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test_user -d finanzas_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -62,6 +62,30 @@ jobs:
       - name: Run type checking
         run: uv run mypy app/ --ignore-missing-imports
         continue-on-error: true  # No bloquear por ahora
+
+      - name: Wait for PostgreSQL and ensure test database exists
+        env:
+          PGPASSWORD: test_password
+        run: |
+          # Wait for PostgreSQL to be fully ready
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U test_user; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL... attempt $i"
+            sleep 1
+          done
+          
+          # Verify connection and list databases
+          psql -h localhost -p 5432 -U test_user -d postgres -c "\l"
+          
+          # Create test database if it doesn't exist (fallback)
+          psql -h localhost -p 5432 -U test_user -d postgres -c "SELECT 1 FROM pg_database WHERE datname = 'finanzas_test'" | grep -q 1 || \
+            psql -h localhost -p 5432 -U test_user -d postgres -c "CREATE DATABASE finanzas_test;"
+          
+          # Verify the test database exists
+          psql -h localhost -p 5432 -U test_user -d finanzas_test -c "SELECT 1;" && echo "✓ Test database finanzas_test is ready"
 
       - name: Run tests
         env:
