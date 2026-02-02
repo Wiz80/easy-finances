@@ -568,3 +568,4 @@ class TestConfigurationAgentDeprecation:
             assert len(deprecation_warnings) >= 1
             assert "deprecated" in str(deprecation_warnings[0].message).lower()
 
+

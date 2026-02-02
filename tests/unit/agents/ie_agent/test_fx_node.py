@@ -411,3 +411,4 @@ class TestFXNodeIntegration:
             assert result.get("fx_conversion").rate == Decimal("1.08")
             assert result.get("amount_in_home_currency") == 108.00
 
+

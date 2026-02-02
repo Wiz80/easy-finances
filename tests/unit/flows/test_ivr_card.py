@@ -508,3 +508,4 @@ class TestCardFullFlow:
         assert response.flow_complete is True
         assert "Visa Gold" in response.message
 
+

@@ -20,7 +20,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: test_finanzas
+          POSTGRES_DB: finanzas_test
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
         ports:
@@ -69,7 +69,7 @@ jobs:
           POSTGRES_PORT: 5432
           POSTGRES_USER: test_user
           POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: test_finanzas
+          POSTGRES_TEST_DB: finanzas_test
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           REDIS_ENABLED: "true"

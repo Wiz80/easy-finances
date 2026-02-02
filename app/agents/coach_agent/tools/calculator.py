@@ -300,3 +300,4 @@ def budget_percentage_used(total: Decimal, spent: Decimal) -> Decimal:
         return Decimal("0")
     return ((spent / total) * Decimal("100")).quantize(Decimal("0.01"))
 
+
