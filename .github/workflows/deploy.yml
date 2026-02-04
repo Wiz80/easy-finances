@@ -73,23 +73,23 @@ jobs:
             # =====================================================
             # STEP 1: Initial VM Setup (if first time)
             # =====================================================
-            if [ ! -d "/opt/finanzas" ]; then
-              echo "🔧 First time setup - Creating /opt/finanzas..."
-              sudo mkdir -p /opt/finanzas
-              sudo chown -R $USER:$USER /opt/finanzas
-            fi
+            echo "🔧 Ensuring /opt/finanzas exists..."
+            sudo mkdir -p /opt/finanzas
+            sudo chown -R $USER:$USER /opt/finanzas
 
             # =====================================================
             # STEP 2: Clone or update repository
             # =====================================================
             cd /opt/finanzas
 
-            if [ ! -d ".git" ]; then
-              echo "📥 Cloning repository..."
-              git clone https://${GH_PAT}@github.com/Wiz80/easy-finances.git .
-            else
-              echo "📥 Pulling latest code..."
+            if [ -d ".git" ]; then
+              echo "📥 Repository exists, pulling latest code..."
               git pull origin main || true
+            else
+              echo "📥 Cloning repository..."
+              # Remove any existing files first (in case directory exists but isn't a git repo)
+              rm -rf /opt/finanzas/* /opt/finanzas/.[!.]* 2>/dev/null || true
+              git clone https://${GH_PAT}@github.com/Wiz80/easy-finances.git .
             fi
 
             # =====================================================
